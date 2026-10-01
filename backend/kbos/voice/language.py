@@ -26,7 +26,10 @@ HINGLISH = {
 
 def detect(text: str) -> str:
     """'hi' for Hindi (Devanagari) or Hinglish (romanized), else 'en'."""
-    if DEVANAGARI.search(text or ""):
+    dev = len(DEVANAGARI.findall(text or ""))
+    latin = len(re.findall(r"[A-Za-z]", text or ""))
+    # STT sometimes writes a stray word ("KB" -> "के भी") in Devanagari inside English speech.
+    if dev and dev / (dev + latin) >= 0.25:
         return "hi"
     words = re.findall(r"[a-z]+", (text or "").lower())
     hits = sum(w in HINGLISH for w in words)

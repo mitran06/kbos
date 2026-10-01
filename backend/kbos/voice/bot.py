@@ -65,6 +65,7 @@ from kbos.voice.language import ReplyLanguage, detect
 from kbos.voice.services import KBSarvamTTS, make_llm
 from kbos.voice.tools import TOOLS, KBState, discard_draft, draft_view, handover_tickets, run_tool
 
+LANG_TAG = {"hi": " [reply in Hindi, Devanagari]", "en": " [reply in English]"}
 UI_ONLY = {"show_tickets"}  # results don't change what KB says: skip the 2nd LLM call if KB already spoke
 MACHINE_TERMS = ["4B", "2A", "3C", "1D", "5A", "6B"]
 
@@ -203,7 +204,11 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
             text = m.get("content") if m.get("role") == "user" else None
             if isinstance(text, str) and text.strip():
                 if not text.startswith("["):
-                    activity.latest_user_lang = detect(text)
+                    activity.latest_user_lang = detect(text.split(" [reply in")[0])
+                    # Recency beats the system prompt: tag the turn itself with its reply language.
+                    tag = LANG_TAG[activity.latest_user_lang]
+                    if not text.endswith(tag):
+                        m["content"] = text.split(" [reply in")[0] + tag
                 break
         context.messages[0]["content"] = prompts.system_prompt(state, activity.latest_user_lang)
 

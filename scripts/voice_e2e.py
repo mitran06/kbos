@@ -160,12 +160,20 @@ class Session:
             if np.sqrt(np.mean(pcm**2)) > 300:
                 self.bot_audio_at.append(time.monotonic())
 
-    async def quiet(self, gap: float = 1.2, timeout: float = 30) -> None:
-        """Wait until KB has made no sound for `gap` seconds."""
+    def _bot_speaking(self) -> bool:
+        for _, m in reversed(self.events):
+            if m.get("type") == "bot-started-speaking":
+                return True
+            if m.get("type") == "bot-stopped-speaking":
+                return False
+        return False
+
+    async def quiet(self, gap: float = 1.5, timeout: float = 40) -> None:
+        """Wait until KB has stopped speaking (RTVI) and made no sound for `gap` seconds."""
         t0 = time.monotonic()
         while time.monotonic() - t0 < timeout:
             last = self.bot_audio_at[-1] if self.bot_audio_at else 0
-            if time.monotonic() - last > gap and time.monotonic() - t0 > gap:
+            if not self._bot_speaking() and time.monotonic() - last > gap and time.monotonic() - t0 > gap:
                 return
             await asyncio.sleep(0.1)
 
@@ -203,6 +211,8 @@ class Session:
 
     def _summary(self, name: str, secs: float, n_events: int, t_end: float, first_audio: float | None) -> dict:
         evs = [m for _, m in self.events[n_events:]]
+        draft_at = next((t for t, m in self.events[n_events:]
+                         if m.get("type") == "server-message" and m.get("data", {}).get("type") == "ui.draft"), None)  # fmt: skip
         heard = [m["data"]["text"] for m in evs if m.get("type") == "user-transcription" and m["data"].get("final")]
         said = [
             m["data"]["text"]
@@ -226,6 +236,7 @@ class Session:
             "server_messages": [s.get("type") for s in server if s.get("type") != "ui.latency"],
             "latency": latency[-1]["lines"][-1] if latency else None,
             "v2v_s": round(first_audio - t_end, 2) if first_audio else None,
+            "draft_ui_s": round(draft_at - t_end, 2) if draft_at else None,
         }
 
     async def close(self) -> None:

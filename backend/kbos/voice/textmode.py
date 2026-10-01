@@ -118,7 +118,8 @@ class TextSession:
     # --- public API ---
     async def say(self, text: str) -> Turn:
         self.lang = detect(text)
-        self.messages.append({"role": "user", "content": text})
+        tag = " [reply in Hindi, Devanagari]" if self.lang == "hi" else " [reply in English]"
+        self.messages.append({"role": "user", "content": text + tag})
         self.state.transcript.append({"who": "user", "text": text, "lang": self.lang})
         return await self._run(Turn(user=text))
 
