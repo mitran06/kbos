@@ -14,7 +14,10 @@ from typing import Any
 from loguru import logger
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
@@ -46,6 +49,7 @@ from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
+from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 from sqlmodel import select
@@ -112,6 +116,7 @@ class Activity(BaseObserver):
             elif isinstance(f, TranscriptionFrame) and f.text.strip():
                 self.latest_user_lang = detect(f.text)
                 self.state.transcript.append({"who": "user", "text": f.text, "lang": self.latest_user_lang})
+                logger.info(f"heard: {f.text}")
         elif data.source is self.llm and isinstance(f, (LLMFullResponseStartFrame, LLMTextFrame, LLMFullResponseEndFrame)):
             self._seen.add(f.id)
             if isinstance(f, LLMFullResponseStartFrame):
@@ -162,7 +167,7 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
     stt = GatedSarvamSTT(
         api_key=key,
         sample_rate=16000,
-        keyterms=["KB", *MACHINE_TERMS, "Monitoring", "vibration", *glossary],
+        keyterms=["KB", *MACHINE_TERMS, "vibration", "critical", "severity", "production", *glossary],
         ttfs_p99_latency=1.6,
         settings=GatedSarvamSTT.Settings(
             model=settings.stt_model, language_code=settings.stt_language, mode=settings.stt_mode, stream_type="fast"
@@ -217,9 +222,14 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
+            # Stricter than default so fans and distant chatter don't open turns (Sarvam hallucinates on noise).
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.75, start_secs=0.2, stop_secs=0.2, min_volume=0.6)),
             # A late final transcript must not open a phantom turn and interrupt KB.
-            user_turn_strategies=UserTurnStrategies(start=[VADUserTurnStartStrategy()]),
+            user_turn_strategies=UserTurnStrategies(
+                start=[VADUserTurnStartStrategy()],
+                # Smart Turn often calls short Hindi fragments "incomplete"; cap its silence fallback.
+                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=1.4)))],
+            ),
         ),
     )
     pipeline = Pipeline([

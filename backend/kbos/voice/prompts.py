@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlmodel import select
 
 from kbos import db
@@ -65,17 +67,37 @@ def system_prompt(state: KBState, latest_lang: str) -> str:
     return f"{RULES}\n\nLIVE CONTEXT\n{live_context(state, latest_lang)}"
 
 
+def _ticket_fact(t: dict) -> str:
+    who = t["reporter"]["name"].split()[0] if t["reporter"] else "someone"
+    bits = [f'{t["machine_code"]} {t["title"]} ({t["key"]}, {t["severity"]}, {t["status"].replace("_", " ")}, reported {ist_hm(datetime.fromisoformat(t["created_at"]))} by {who})']
+    lc = t["last_check"]
+    if lc and lc["unclear"]:
+        by = lc["author"]["name"].split()[0]
+        bits.append(f'{by} marked it "{lc["what_found"] or "checked"}" at {ist_hm(datetime.fromisoformat(lc["created_at"]))} without saying what was checked')
+    if t["overdue"]:
+        bits.append(f'next check was due {ist_hm(datetime.fromisoformat(t["next_check_at"]))}: overdue')
+    return "; ".join(bits)
+
+
 def brief_instruction(data: dict, lang: str) -> str:
     language = "Hindi (Devanagari, technical words in Latin)" if lang == "hi" else "English"
+    by_key = {t["key"]: t for t in data["tickets"]}
+    lead = [by_key[k] for k in dict.fromkeys(data["critical"] + data["overdue"] + data["unclear"]) if k in by_key]
+    facts = "\n".join(f"- {_ticket_fact(t)}" for t in lead[:3])
+    mine = ", ".join(f'{by_key[k]["machine_code"]} {by_key[k]["title"]}' for k in data["assigned_to_me"] if k in by_key) or "nothing"
+    hour = int(ist_hm(db.now())[:2])
+    greet = "Morning" if 4 <= hour < 12 else "Afternoon" if 12 <= hour < 17 else "Evening" if 17 <= hour < 22 else "Hi"
     return (
-        f"[Shift start] Give {data['person'].split()[0]} the Shift Brief now, in {language}. About three short spoken "
-        "sentences: greet them by first name; say how many tickets are open; lead with critical ones, then overdue "
-        "Monitoring and any Unclear Check (say who marked it checked and that they didn't say what was checked); "
-        "mention anything assigned to them. End by offering details (e.g. 'Want details on any of them?'). "
-        "The cards are already on screen; do not call show_tickets. "
-        f"Brief data: critical={data['critical']}, overdue={data['overdue']}, unclear_checks={data['unclear']}, "
-        f"assigned_to_them={data['assigned_to_me']}, changed_since_their_last_shift={data['changed_since']}, "
-        f"closed_since={data['closed_since']}, open_count={data['active_count']}."
+        f"[Shift start] Give {data['person'].split()[0]} the Shift Brief now, in {language}: three or four short "
+        f"spoken sentences, no lists. Start with '{greet} {data['person'].split()[0]}.' Say {data['active_count']} tickets "
+        "are open. Then the important ones below, named by machine and problem (not by ticket number): critical "
+        "first, then the overdue Monitoring with its Unclear Check (who marked it checked, when, without saying "
+        f"what). Then what's assigned to them ({mine}). End with: 'Want details on any of them?' The cards are "
+        "already on screen; don't call any tool.\n"
+        f"Important tickets:\n{facts}\n"
+        "Example of the style: \"Morning Ramesh. Five tickets are open. The 2A hydraulic leak is critical and still "
+        "open. The 4B vibration from 02:20 is in Monitoring but not resolved: Suresh marked it checked at 05:45 "
+        "without saying what was checked, and the next check is overdue. Want details on any of them?\""
     )
 
 

@@ -1,0 +1,99 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  --color-bg: #f7f7f5;
+  --color-card: #ffffff;
+  --color-sunk: #f2f2ef;
+  --color-ink: #17181a;
+  --color-ink-2: #4b4d52;
+  --color-muted: #85878c;
+  --color-faint: #b4b5b8;
+  --color-line: #ebebe6;
+  --color-line-2: #deded8;
+
+  --color-crit: #d92d20;
+  --color-crit-soft: #fdeeec;
+  --color-high: #e0590f;
+  --color-high-soft: #fff1e6;
+  --color-amber: #a86400;
+  --color-amber-dot: #f0a020;
+  --color-amber-soft: #fff5dc;
+  --color-amber-line: #f6d488;
+  --color-ok: #16803c;
+  --color-ok-soft: #e9f6ee;
+  --color-ok-dot: #22a554;
+
+  --color-kb-blue: #7aa7ff;
+  --color-kb-violet: #a98bfa;
+  --color-kb-pink: #f4a1cf;
+  --color-kb-teal: #67dccb;
+
+  --shadow-card: 0 1px 2px rgba(23, 24, 26, 0.04), 0 6px 24px -8px rgba(23, 24, 26, 0.08);
+  --shadow-lift: 0 2px 6px rgba(23, 24, 26, 0.05), 0 18px 48px -12px rgba(23, 24, 26, 0.18);
+
+  --animate-row-in: row-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-up: fade-up 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-orb: orb-drift 9s ease-in-out infinite;
+  --animate-breathe: breathe 4s ease-in-out infinite;
+  --animate-alarm: alarm-ring 1.6s ease-in-out infinite;
+
+  @keyframes row-in {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes orb-drift {
+    0%, 100% { transform: rotate(0deg) scale(1); }
+    50% { transform: rotate(180deg) scale(1.04); }
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.55; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.25); }
+  }
+  @keyframes alarm-ring {
+    0%, 100% { box-shadow: 0 0 0 1.5px rgba(217, 45, 32, 0.55), 0 0 0 6px rgba(217, 45, 32, 0.08), var(--shadow-card); }
+    50% { box-shadow: 0 0 0 1.5px rgba(217, 45, 32, 0.9), 0 0 0 10px rgba(217, 45, 32, 0.14), var(--shadow-card); }
+  }
+}
+
+html {
+  /* 16px on a 1920 projector, ~14px at 1366 */
+  font-size: clamp(13.5px, 0.42vw + 8px, 16px);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+}
+.tnum { font-variant-numeric: tabular-nums; }
+::selection { background: color-mix(in oklab, var(--color-kb-violet) 30%, white); }
+
+*:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-kb-violet) 70%, var(--color-ink));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.scroll-thin { scrollbar-width: thin; scrollbar-color: var(--color-line-2) transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes sheet-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes sheet-out { from { transform: none; opacity: 1; } to { transform: translateX(30px); opacity: 0; } }
+@keyframes pop-in { from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }

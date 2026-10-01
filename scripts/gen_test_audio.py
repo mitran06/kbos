@@ -33,6 +33,15 @@ UTTERANCES: dict[str, tuple[str, str, str]] = {
     "hing_vib": ("hi-IN", "aditya", "KB, 4B pe phir se bahut vibration aa raha hai, awaaz bhi aa rahi hai, machine abhi chal rahi hai."),
     "hing_yes": ("hi-IN", "rahul", "Haan, same issue hai. Das minute se ho raha hai."),
     "hing_check": ("hi-IN", "aditya", "3C checked. Bas check kar liya, sab theek hai."),
+    "hing_same": ("hi-IN", "aditya", "हाँ, same problem है।"),
+    "hing_since": ("hi-IN", "aditya", "दस minute से।"),
+    "hing_critical": ("hi-IN", "aditya", "Critical, production रुक जाएगा।"),
+    "hing_file": ("hi-IN", "aditya", "हाँ, file कर दो।"),
+    "en_assigned": ("en-IN", "rahul", "What's assigned to me?"),
+    "en_close141": ("en-IN", "rahul", "Close one four one too, same root cause."),
+    "en_3c": ("en-IN", "rahul", "3C checked."),
+    "hing_bas": ("hi-IN", "rahul", "बस check कर लिया।"),
+    "en_handover": ("en-IN", "aditya", "Still vibrating a little, Imran is on it."),
 }
 
 

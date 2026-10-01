@@ -13,17 +13,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections import deque
 from typing import Any
 
+import numpy as np
 from loguru import logger
-from pipecat.frames.frames import Frame, InputAudioRawFrame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    Frame,
+    InputAudioRawFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessorSetup
 from pipecat.services.sarvam._sdk import sdk_headers
 from pipecat.services.sarvam.stt import SarvamRealtimeSTTService
 from websockets.protocol import State
 
 PRE_ROLL_S = 0.6
+ECHO_TAIL_S = 0.9
 CONNECT_BUFFER_S = 2.0
 
 
@@ -38,6 +48,19 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         self._connecting: asyncio.Task | None = None
         self._keepalive: asyncio.Task | None = None
         self.sent_bytes = 0  # audio actually sent to Sarvam (billing proxy)
+        self._bot_speaking = False
+        self._echo_until = 0.0
+        self._stats = [0, 0]
+        self._peak = 0
+        self._stats_at = 0.0
+
+    def _hearing_self(self) -> bool:
+        if self._bot_speaking or time.monotonic() < self._echo_until:
+            if self._in_speech:
+                self._in_speech = False  # drop any half-heard echo utterance
+            self._clear_ring()
+            return True
+        return False
 
     # -- gate ---------------------------------------------------------------
 
@@ -130,9 +153,25 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         return params
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        if isinstance(frame, InputAudioRawFrame) and not self._gate_open:
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            self._echo_until = time.monotonic() + ECHO_TAIL_S
+        if isinstance(frame, InputAudioRawFrame):
+            self._stats[0] += 1
+            self._peak = max(self._peak, int(np.sqrt(np.mean(np.frombuffer(frame.audio, dtype=np.int16).astype(np.float32) ** 2))))
+            now = time.monotonic()
+            if self._gate_open and now - self._stats_at > 5:
+                logger.debug(f"stt gate audio: {self._stats[0]} frames, {self._stats[1]} dropped as echo, peak rms {self._peak}, bot_speaking={self._bot_speaking}")
+                self._stats, self._stats_at, self._peak = [0, 0], now, 0
+        if isinstance(frame, InputAudioRawFrame) and self._gate_open and self._hearing_self():
+            self._stats[1] += 1
+        if isinstance(frame, InputAudioRawFrame) and (not self._gate_open or self._hearing_self()):
             # Closed gate: the mic doesn't exist as far as the pipeline is concerned, so room
-            # noise can't open a user turn (VAD) and nothing is billed.
+            # noise can't open a user turn (VAD) and nothing is billed. While KB speaks (and a
+            # short tail after) the phone's speaker leaks into its mic and KB would interrupt
+            # itself, so it's half-duplex: the Stop button is the way to cut KB off.
             return
         if isinstance(frame, VADUserStartedSpeakingFrame):
             await self._speech_started()

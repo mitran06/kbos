@@ -240,10 +240,10 @@ def next_step(state: KBState, possible: list[dict]) -> str:
         state.related_asked = True
         return (f"ask ONLY whether this is the same problem as {p['key']} ('{p['title']}', {p['status']}"
                 f"{', overdue' if p['overdue'] else ''}); then call update_draft with related_ticket_key "
-                f"'{p['key']}' if yes or 'none' if no")  # fmt: skip
+                f"'{p['key']}' if yes or 'none' if no. Ask in the user's language")  # fmt: skip
     missing = draft_missing(d)
     if missing:
-        return f"ask ONLY {QUESTIONS[missing[0]]} (one short question)"
+        return f"ask ONLY {QUESTIONS[missing[0]]} (one short question, in the user's language)"
     if not state.photo_offered:
         return "call request_photo now"
     return "read back a one-sentence summary and ask whether to file it"
