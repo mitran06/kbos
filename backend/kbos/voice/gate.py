@@ -176,10 +176,8 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
             # Closed gate: nothing reaches STT (no billing) and room noise can't open a user turn.
             # While KB speaks (and a short tail after) the phone speaker leaks into its mic and KB
             # would interrupt itself, so it's half-duplex: the Stop button is how you cut KB off.
-            # Downstream still gets *silence*, not nothing: if VAD stopped receiving frames mid-
-            # utterance it would stay stuck in "speaking" and never report the next speech start.
-            frame.audio = bytes(len(frame.audio))
-            await self.push_frame(frame, direction)
+            # Drop it (the VAD's audio_idle_timeout settles a half-heard utterance; the aggregator's
+            # EchoTailUserMuteStrategy does the same muting for the VAD).
             return
         if isinstance(frame, VADUserStartedSpeakingFrame):
             await self._speech_started()

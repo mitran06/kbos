@@ -48,6 +48,7 @@ from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
 from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
 from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
@@ -68,6 +69,28 @@ from kbos.voice.tools import TOOLS, KBState, closed_this_shift, discard_draft, d
 LANG_TAG = {"hi": " [reply in Hindi, Devanagari]", "en": " [reply in English]"}
 UI_ONLY = {"show_tickets"}  # results don't change what KB says: skip the 2nd LLM call if KB already spoke
 MACHINE_TERMS = ["4B", "2A", "3C", "1D", "5A", "6B"]
+
+
+class EchoTailUserMuteStrategy(BaseUserMuteStrategy):
+    """Half-duplex: ignore the mic while KB speaks and for a short tail after (speaker echo).
+
+    Muted frames are dropped before the VAD (Pipecat's user-mute hook), so the VAD's volume
+    window isn't drained by silence and reacts at once when the user speaks.
+    """
+
+    def __init__(self, tail_s: float = 0.9) -> None:
+        super().__init__()
+        self._tail_s = tail_s
+        self._speaking = False
+        self._until = 0.0
+
+    async def process_frame(self, frame: Frame) -> bool:
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._speaking = False
+            self._until = time.monotonic() + self._tail_s
+        return self._speaking or time.monotonic() < self._until
 
 
 class ContextRefresher(FrameProcessor):
@@ -233,6 +256,7 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
             # Stricter than default so fans and distant chatter don't open turns (Sarvam hallucinates on noise).
             vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.7, start_secs=0.2, stop_secs=0.35, min_volume=0.6)),
             # A late final transcript must not open a phantom turn and interrupt KB.
+            user_mute_strategies=[EchoTailUserMuteStrategy(0.9)],
             user_turn_strategies=UserTurnStrategies(
                 start=[VADUserTurnStartStrategy()],
                 # Smart Turn often calls short Hindi fragments "incomplete"; cap its silence fallback.
