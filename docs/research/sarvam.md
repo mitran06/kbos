@@ -338,3 +338,13 @@ The biggest levers are `stream_type="fast"`, a lower `silence_duration_ms`, a sh
 - Integrations: https://docs.sarvam.ai/api/integration/build-voice-agent-with-pipecat , https://docs.sarvam.ai/api/integration/pipecat-production-guide , https://docs.sarvam.ai/api/integration/livekit-production-best-practices , https://github.com/sarvamai/skills/blob/main/voice-agents/SKILL.md
 - Pipecat v1.12.0: https://pypi.org/project/pipecat-ai/ , https://github.com/pipecat-ai/pipecat/tree/v1.12.0/src/pipecat/services/sarvam , https://github.com/pipecat-ai/pipecat/blob/v1.12.0/CHANGELOG.md , https://docs.pipecat.ai/api-reference/server/services/stt/sarvam , https://docs.pipecat.ai/api-reference/server/services/tts/sarvam , https://docs.pipecat.ai/api-reference/server/services/llm/sarvam
 - Voice Agents: https://docs.sarvam.ai/conversations/overview , https://docs.sarvam.ai/conversations/build/models , https://docs.sarvam.ai/conversations/build/run-time , https://docs.sarvam.ai/conversations/deploy/sdks/python , https://docs.sarvam.ai/conversations/deploy/sdks/web , https://www.sarvam.ai/products/voice-agents
+
+---
+
+## 8. Verified while building KBOS (2026-10-02)
+
+- All 8 trial keys work on `sarvam-105b-conversations` (v1), realtime STT `saaras:v4` and `bulbul:v3` WS. Realtime STT is **not** beta-gated for them.
+- **The gateway intermittently returns HTTP 404** on `/v1/chat/completions` and on the TTS WebSocket handshake (about 2 in 9 requests at one point, then fine). Retry them; the voice services retry connects.
+- **Realtime STT keyterms:** pass `keyterms` as a JSON array string in the query (`["KB","4B",...]`); it works with `saaras:v4`.
+- **Realtime STT, `endpointing=manual`:** audio sent before `speech_start` is ignored (the first syllable gets lost). An idle socket (no audio) drops after about 2 s without a close frame, so send `{"event":"ping"}` about every 1 s.
+- Measured: speech_end → final ≈ 0.16–0.3 s (manual endpointing, `stream_type=fast`). TTS first audio ≈ 0.2–0.25 s. LLM TTFT ≈ 0.16–0.23 s for short prompts, 0.35–1.0 s with KB's ~2k-token prompt.

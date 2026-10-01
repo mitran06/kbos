@@ -445,3 +445,18 @@ Indian STT/TTS in Pipecat: Sarvam (core `sarvam` extra) and Gnani (community `pi
 4. **Smart Turn doesn't cover most South Indian languages.** Choose the turn-stop strategy by the demo language.
 5. **Docs/source mismatch:** the `onServerMessage` payload shape. The source passes the raw payload.
 6. The RN transports were last released **2026-06-22** (1.8.0, on client-js 1.12). Server 1.12.0 speaks RTVI 2.1.0 and client-js 1.13.1 also speaks 2.1.0. Pin `@pipecat-ai/client-js@1.13.1` explicitly so the transport's `^1.12.0` range doesn't float.
+
+---
+
+## 9. Verified while building KBOS (2026-10-02, Pipecat 1.12.0, client-js 1.13.1, RN transport 1.8.0, Nothing Phone 2a)
+
+- **`onServerMessage(data)` receives the raw payload** passed to `rtvi.send_server_message(...)` (e.g. `{type: "ui.draft", ...}`), not `message.data.msg`. The source is right; the docs snippet is wrong.
+- **`client-message` from the app arrives as `msg.type` / `msg.data`** in `@worker.rtvi.event_handler("on_client_message")`. On the wire it is `{"label":"rtvi-ai","type":"client-message","data":{"t":<type>,"d":<data>}}`.
+- **The RN transport works with our own FastAPI app** hosting `POST /start` → `{sessionId}` and `POST|PATCH /sessions/{id}/api/offer`, which hand off to `SmallWebRTCRequestHandler`. The dev runner isn't needed.
+- **`DailyMediaManager`:** a fresh one per connect logs "audio level observer has already been started" (harmless). Sharing one instance across connects broke mic capture ("No audio frame received"), so don't.
+- **`enableMic(false/true)` toggling restarts the level observer and throws.** Keep the mic track on and gate on the server.
+- **Phone speaker echo:** at full speakerphone volume, Android AEC doesn't stop the bot's voice from triggering VAD, so the bot interrupts itself. KB is half-duplex: the STT gate replaces mic audio with silence while the bot speaks, plus 0.9 s.
+- **Don't drop audio frames in front of the VAD.** If Silero stops receiving frames mid-utterance, it stays "speaking" and never reports the next start. Replace audio with silence instead.
+- `TranscriptionUserTurnStartStrategy` (a default) turns a late final transcript into a phantom user turn that interrupts the LLM. We use `VADUserTurnStartStrategy` only, and give STT a `ttfs_p99_latency` of 1.6.
+- Smart Turn's default `stop_secs=3.0` fallback often fires on short Hindi fragments ("incomplete"). We cap it at 1.4 s.
+- `UserBotLatencyObserver.on_latency_breakdown` works as documented. The first turn reports "TOTAL (from client connected)".
