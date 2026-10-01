@@ -22,7 +22,8 @@ export function Dock({ hasContent }: { hasContent: boolean }) {
   const working = useApp((s) => s.working);
   const voiceStatus = useApp((s) => s.voice);
   const typeMode = useApp((s) => s.typeMode);
-  const [typing, setTyping] = useState(false);
+  const typing = useApp((s) => s.typing);
+  const setTyping = (v: boolean) => useApp.getState().set({ typing: v });
   const [text, setText] = useState('');
 
   const mode = listening ? 'pill' : hasContent ? 'dock' : 'hero';
@@ -44,7 +45,6 @@ export function Dock({ hasContent }: { hasContent: boolean }) {
     y.set(withSpring(target.y, SPRING));
     sc.set(withSpring(target.s, SPRING));
     pill.set(mode === 'pill' ? withDelay(60, withSpring(1, { duration: 420, dampingRatio: 0.9 })) : withTiming(0, { duration: 180 }));
-    if (mode !== 'pill') setTyping(false);
   }, [mode, target.x, target.y, target.s, x, y, sc, pill]);
 
   const level = useDerivedValue(() => (botSpeakingSV.get() ? botLevel.get() : listeningSV.get() ? micLevel.get() : 0));

@@ -21,6 +21,7 @@ HINGLISH = {
     "kya", "haan", "ha", "ho", "kab", "mein", "ki", "ka", "ko", "bas", "abhi", "phir", "bahut", "wala", "wali",
     "diya", "dena", "do", "theek", "thik", "chal", "ruk", "jayega", "hoga", "mera", "meri", "aur", "kuch", "koi",
     "minute", "lagta", "lag", "gaya", "gayi", "liya", "chahiye", "batao", "dikhao", "kaun", "kaunse", "sab",
+    "ke", "baad", "pehle", "yeh", "woh", "kuchh", "acha", "accha", "haa", "hua", "hui", "kijiye", "dijiye",
 }  # fmt: skip
 
 

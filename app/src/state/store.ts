@@ -32,6 +32,7 @@ interface AppState {
   handover: string | null;
   latency: string[];
   typeMode: boolean;
+  typing: boolean; // the hidden typed input is open in the pill
 
   set: (patch: Partial<AppState>) => void;
   resetSession: () => void;
@@ -51,6 +52,7 @@ const sessionDefaults = {
   camera: null,
   drop: null,
   handover: null,
+  typing: false,
 };
 
 export const useApp = create<AppState>((set) => ({

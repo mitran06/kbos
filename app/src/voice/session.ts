@@ -157,7 +157,7 @@ class VoiceSession {
   }
 
   stop(): void {
-    useApp.getState().set({ listening: false });
+    useApp.getState().set({ listening: false, typing: false });
     listeningSV.set(0);
     this.send('listen.stop');
     micLevel.set(0);
@@ -189,7 +189,8 @@ class VoiceSession {
         set({ filed: m.ticket, draft: null, camera: null });
         break;
       case 'ui.session_end':
-        this.stop();
+        // Typing doesn't need the mic: keep the pill (and its text field) open.
+        if (!useApp.getState().typing && !useApp.getState().typeMode) this.stop();
         break;
       case 'ui.shift_ended':
         set({ handover: m.summary || 'Handover recorded' });
