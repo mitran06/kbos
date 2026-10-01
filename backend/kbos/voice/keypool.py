@@ -21,8 +21,10 @@ class KeyPool:
             self.status.setdefault(i, "untested")
 
     def _usable(self) -> list[int]:
-        good = [i for i, s in self.status.items() if s != "exhausted"]
-        return good or list(range(len(self.keys)))
+        # Voice sessions take keys from the back: text-mode tests and tooling use the first keys,
+        # so the last ones have the most credit left.
+        good = sorted((i for i, s in self.status.items() if s != "exhausted"), reverse=True)
+        return good or list(range(len(self.keys) - 1, -1, -1))
 
     def next_index(self) -> int:
         if not self.keys:
