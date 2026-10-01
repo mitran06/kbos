@@ -167,7 +167,7 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
     stt = GatedSarvamSTT(
         api_key=key,
         sample_rate=16000,
-        keyterms=["KB", *MACHINE_TERMS, "vibration", "critical", "severity", "production", *glossary],
+        keyterms=["KB", *MACHINE_TERMS, "vibration", "critical", "severity", "production", "assigned", "spindle bearing", *glossary],
         ttfs_p99_latency=1.6,
         settings=GatedSarvamSTT.Settings(
             model=settings.stt_model, language_code=settings.stt_language, mode=settings.stt_mode, stream_type="fast"

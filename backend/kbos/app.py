@@ -234,9 +234,10 @@ def create_app(db_path: Path | str | None = None, *, probe_keys: bool = True) ->
                 if body.status and body.status != t.status:
                     if not body.check:
                         raise DomainError("a status change needs a check: what was checked and what was found")
-                    add_check(s, t.key, None, body.check.what_checked, body.check.what_found,
-                              new_status=body.status, next_check_minutes=body.check.next_check_minutes,
-                              unclear=body.check.unclear)  # fmt: skip
+                    _, c = add_check(s, t.key, None, body.check.what_checked, body.check.what_found,
+                                     new_status=body.status, next_check_minutes=body.check.next_check_minutes,
+                                     unclear=body.check.unclear)  # fmt: skip
+                    hub.publish("check.added", {"ticket_key": t.key, "check": tickets_d.check_dict(s, c)})
                 tickets_d.update_ticket(s, t.key, title=body.title, description=body.description, severity=body.severity)
                 if body.assignee_ids is not None:
                     tickets_d.set_assignees(s, t, body.assignee_ids)
@@ -386,7 +387,7 @@ def create_app(db_path: Path | str | None = None, *, probe_keys: bool = True) ->
         index = dash / "index.html"
         if not index.exists():
             raise HTTPException(404, "dashboard not built (cd dashboard && pnpm build)")
-        return FileResponse(index)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
     return app
 

@@ -263,6 +263,13 @@ async def main() -> None:
         results.append(r)
         print(json.dumps(r, ensure_ascii=False))
     for t in args.text:
+        if t.startswith("!"):  # raw client message, e.g. !photo.skipped
+            s.client_message(t[1:])
+            await asyncio.sleep(1.0)
+            r = await s.text_turn("") if False else {"turn": t}
+            await s.quiet(gap=1.5, timeout=20)
+            print(json.dumps(r))
+            continue
         r = await s.text_turn(t)
         results.append(r)
         print(json.dumps(r, ensure_ascii=False))

@@ -168,10 +168,13 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         if isinstance(frame, InputAudioRawFrame) and self._gate_open and self._hearing_self():
             self._stats[1] += 1
         if isinstance(frame, InputAudioRawFrame) and (not self._gate_open or self._hearing_self()):
-            # Closed gate: the mic doesn't exist as far as the pipeline is concerned, so room
-            # noise can't open a user turn (VAD) and nothing is billed. While KB speaks (and a
-            # short tail after) the phone's speaker leaks into its mic and KB would interrupt
-            # itself, so it's half-duplex: the Stop button is the way to cut KB off.
+            # Closed gate: nothing reaches STT (no billing) and room noise can't open a user turn.
+            # While KB speaks (and a short tail after) the phone speaker leaks into its mic and KB
+            # would interrupt itself, so it's half-duplex: the Stop button is how you cut KB off.
+            # Downstream still gets *silence*, not nothing: if VAD stopped receiving frames mid-
+            # utterance it would stay stuck in "speaking" and never report the next speech start.
+            frame.audio = bytes(len(frame.audio))
+            await self.push_frame(frame, direction)
             return
         if isinstance(frame, VADUserStartedSpeakingFrame):
             await self._speech_started()
