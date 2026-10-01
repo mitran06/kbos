@@ -338,10 +338,13 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
             if "error" in result:
                 await say_after(f"[The user tapped File, but filing failed: {result['error']}] Ask for what's missing in one short question.")
             else:
-                await say_after(f"[The user tapped File. Filed {result['ticket_key']}, assigned to {', '.join(result['assignees'])}.] Confirm in one short line.")
+                await say_after(
+                    f"[The user tapped File. It is already filed as {result['ticket_key']}, assigned to "
+                    f"{', '.join(result['assignees'])}; the card is on screen.] Confirm in one short line. Don't call any tool."
+                )
         elif t == "draft.discard":
             await discard_draft(state)
-            await say_after("[The user tapped Discard on the Draft.] Acknowledge in a few words.")
+            await say_after("[The user tapped Discard; the Draft is already gone.] Acknowledge in a few words. Don't call any tool.")
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):

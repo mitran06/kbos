@@ -37,6 +37,7 @@ export function CameraSheet() {
       const r = await api.upload(uri, voice.sessionId, person.id);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       voice.send('photo.attached', { photo_ids: [r.photo_id] });
+      voice.listen(); // KB reads the Draft back next: be ready for the yes
       setTimeout(close, 450);
     } catch (e) {
       console.log('[kb] upload failed', String(e));
@@ -60,6 +61,7 @@ export function CameraSheet() {
   const skip = () => {
     Haptics.selectionAsync();
     voice.send('photo.skipped');
+    voice.listen();
     close();
   };
 

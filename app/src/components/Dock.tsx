@@ -92,6 +92,7 @@ export function Dock({ hasContent }: { hasContent: boolean }) {
               placeholder="Type to KB…"
               placeholderTextColor={C.ink3}
               returnKeyType="send"
+              submitBehavior="submit"
               onSubmitEditing={() => {
                 if (text.trim()) voice.sendText(text.trim());
                 setText('');

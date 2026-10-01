@@ -2,6 +2,7 @@
 # Build the KBOS debug APK locally (no EAS) and optionally install it.
 #   scripts/build_apk.sh            # build
 #   scripts/build_apk.sh --install  # build + adb install -r + grant permissions
+#   scripts/build_apk.sh --release  # standalone APK with the JS bundle embedded (the demo build)
 #   scripts/build_apk.sh --prebuild # regenerate app/android first (after native dep/app.json changes)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,8 +21,10 @@ grep -q '^org.gradle.workers.max' $P || printf '\norg.gradle.workers.max=4\n' >>
 grep -q '^org.gradle.java.home' $P || printf 'org.gradle.java.home=%s\norg.gradle.java.installations.paths=%s\norg.gradle.java.installations.auto-download=false\n' "$JAVA_HOME" "$JAVA_HOME" >> $P
 echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-(cd android && ./gradlew assembleDebug --max-workers=4)
-APK=android/app/build/outputs/apk/debug/app-debug.apk
+VARIANT=Debug
+[[ " $* " == *" --release "* ]] && VARIANT=Release
+(cd android && ./gradlew assemble$VARIANT --max-workers=4)
+APK=android/app/build/outputs/apk/${VARIANT,,}/app-${VARIANT,,}.apk
 ls -la "$APK"
 
 if [[ " $* " == *" --install "* ]]; then

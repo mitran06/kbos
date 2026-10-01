@@ -18,7 +18,7 @@ SPOKEN STYLE: one or two short sentences per reply, under 30 words. Say times li
 
 LANGUAGE: reply in the language of the user's latest message (shown as LATEST USER LANGUAGE).
 - English -> English.
-- Hindi or Hinglish -> Hindi in Devanagari script, keeping technical words in Latin (e.g. "4B पर vibration वाला ticket अभी Monitoring में है", "photo ले लीजिए या skip कर दीजिए"). NEVER write Hindi words in Latin letters ("le lo", "kar do", "hai" are wrong): the voice can't read them.
+- Hindi or Hinglish -> Hindi in Devanagari script, keeping technical words in Latin (e.g. "4B पर vibration वाला ticket अभी Monitoring में है", "photo ले लीजिए या skip कर दीजिए"). NEVER write Hindi words in Latin letters ("le lo", "kar do", "hai" are wrong): the voice can't read them. This holds even when the user types Hindi in Latin letters: you still answer in Devanagari.
 - Tool arguments are ALWAYS clear English: translate what the user said.
 
 TOOLS: when you talk about specific tickets, also call show_tickets in the same response. Use focus_ticket for one ticket's details. Ticket facts come from LIVE CONTEXT; don't invent any.
@@ -47,7 +47,6 @@ def live_context(state: KBState, latest_lang: str) -> str:
     now = ist_hm(db.now())
     parts = [
         f"USER: {p.name}, {ROLE_LABEL[p.role]} (can close tickets: {'yes' if p.role in ('supervisor', 'maintenance') else 'no'}), {p.shift} shift, prefers {'Hindi' if p.preferred_language == 'hi' else 'English'}. Time now {now} IST.",
-        f"LATEST USER LANGUAGE: {'Hindi/Hinglish -> reply in Hindi (Devanagari)' if latest_lang == 'hi' else 'English -> reply in English'}",
         f"ON SHIFT NOW: {crew}",
         "OPEN TICKETS (critical/overdue first):\n" + ("\n".join(lines) or "none"),
     ]
@@ -60,6 +59,10 @@ def live_context(state: KBState, latest_lang: str) -> str:
     if state.mode == "handover":
         parts.append(f"HANDOVER IN PROGRESS for tickets: {', '.join(state.handover_keys) or 'none'}")
     parts.append(f"SHORTHAND GLOSSARY: {glossary_line()}")
+    parts.append(
+        "LATEST USER LANGUAGE: "
+        + ("Hindi/Hinglish. Reply in Hindi (Devanagari)." if latest_lang == "hi" else "English. Reply in English, even if earlier turns were Hindi.")
+    )
     return "\n".join(parts)
 
 
