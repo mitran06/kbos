@@ -15,6 +15,9 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.sarvam.tts import SarvamTTSService
 
+# Hindi verbs/auxiliaries: one of these means the sentence itself is Hindi, not an English sentence
+# with a stray Devanagari word (STT sometimes writes "KB" as "के भी").
+HINDI_VERBS = re.compile(r"(?<![\u0900-\u0963\u0966-\u097F])(है|हैं|था|थी|थे|हूँ|हूं|हो|रहा|रही|रहे|गया|गई|गए|करो|कर|दो|दीजिए|नहीं|हाँ|हां|चाहिए|जाएगा)(?![\u0900-\u0963\u0966-\u097F])")
 DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 HINGLISH = {
     "hai", "hain", "nahi", "nahin", "kar", "karo", "kiya", "raha", "rahi", "rahe", "se", "pe", "par", "bhi", "aa",
@@ -27,6 +30,8 @@ HINGLISH = {
 
 def detect(text: str) -> str:
     """'hi' for Hindi (Devanagari) or Hinglish (romanized), else 'en'."""
+    if HINDI_VERBS.search(text or ""):
+        return "hi"
     dev = len(DEVANAGARI.findall(text or ""))
     latin = len(re.findall(r"[A-Za-z]", text or ""))
     # STT sometimes writes a stray word ("KB" -> "के भी") in Devanagari inside English speech.
