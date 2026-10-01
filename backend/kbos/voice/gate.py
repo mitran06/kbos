@@ -188,6 +188,7 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         await super().process_frame(frame, direction)
 
     async def _speech_started(self) -> None:
+        logger.debug(f"stt gate: vad start (gate_open={self._gate_open}, socket={self._is_websocket_open()})")
         if not self._gate_open:
             return
         self._in_speech = True
@@ -209,6 +210,7 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         return False
 
     async def _speech_stopped(self) -> None:
+        logger.debug(f"stt gate: vad stop (in_speech={self._in_speech})")
         if not self._gate_open or not self._in_speech:
             return
         self._in_speech = False
