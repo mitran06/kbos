@@ -30,6 +30,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessorSetup
 from pipecat.services.sarvam._sdk import sdk_headers
 from pipecat.services.sarvam.stt import SarvamRealtimeSTTService
+from pipecat.services.websocket_service import WebsocketService
 from websockets.protocol import State
 
 PRE_ROLL_S = 0.6
@@ -113,6 +114,8 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
             await self._connect()
         finally:
             self._connecting = None
+        if self._is_websocket_open() and not self.is_usable:
+            await self.set_usable(True)
         if self._is_websocket_open() and self._in_speech:
             # speech started while connecting: replay what we held
             await self._send_json({"event": "speech_start"})
@@ -138,7 +141,9 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
                     return
                 logger.warning(f"sarvam stt connect failed ({e}); retry {attempt + 1}")
                 await asyncio.sleep(0.3 * (attempt + 1))
-        await super()._connect_websocket()
+        # Don't let the parent file a transient 404 as a permanent error: the next utterance
+        # (or the next listen.start) tries again.
+        logger.error("sarvam stt: could not connect; will retry on the next utterance")
 
     # -- pipecat hooks ----------------------------------------------------------
 
@@ -197,6 +202,12 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
             await self._flush_ring()
         else:
             self._ensure_connecting()  # audio is held until the socket is back
+
+    async def _receive_task_handler(self, report_error):
+        # The parent marks the service unusable when its receive loop ends; ours reconnects on
+        # demand, so end the loop without that (and finish any half-heard utterance).
+        await WebsocketService._receive_task_handler(self, report_error)
+        await self._complete_active_utterance()
 
     async def _maybe_try_reconnect(self, error_message, report_error, error=None) -> bool:
         """A dropped socket is not fatal here: end the receive loop quietly and let the next

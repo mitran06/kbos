@@ -25,6 +25,8 @@ class KeyPool:
         return good or list(range(len(self.keys)))
 
     def next_index(self) -> int:
+        if not self.keys:
+            raise RuntimeError("no SARVAM_API_KEY_n configured in .env")
         usable = self._usable()
         return usable[next(self._cursor) % len(usable)]
 

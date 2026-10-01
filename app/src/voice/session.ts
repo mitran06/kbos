@@ -28,15 +28,22 @@ class VoiceSession {
   }
 
   private wantListen = false;
+  wantHandover = false;
 
   async connect(opts: { brief: boolean; listen?: boolean }): Promise<void> {
     const { person, shift, serverUrl } = useApp.getState();
-    if (!person || this.connecting) return;
+    if (!person) return;
+    if (this.connecting) {
+      // A tap while we're still connecting: remember what the user wanted.
+      this.wantListen ||= !!opts.listen;
+      return;
+    }
     if (this.client) await this.disconnect();
     this.connecting = true;
     this.wantBrief = opts.brief;
     this.wantListen = !!opts.listen;
-    useApp.getState().set({ voice: 'connecting', voiceError: null });
+    // A new session has a fresh server-side Draft: don't leave a stale card or camera up.
+    useApp.getState().set({ voice: 'connecting', voiceError: null, draft: null, camera: null });
 
     const client = new PipecatClient({
       // The RN transport's device types come from react-native-webrtc, not the DOM lib client-js is typed against.
@@ -45,6 +52,7 @@ class VoiceSession {
       enableCam: false,
       callbacks: {
         onTransportStateChanged: (s: TransportState) => {
+          if (this.client !== client) return;
           if (s === 'disconnected' || s === 'error') {
             useApp.getState().set({ voice: s === 'error' ? 'error' : 'off', listening: false, botSpeaking: false, typing: false });
             listeningSV.set(0);
@@ -54,17 +62,23 @@ class VoiceSession {
           client.updateMic('SPEAKERPHONE');
         },
         onBotReady: () => {
+          if (this.client !== client) return;
           useApp.getState().set({ voice: 'ready' });
           if (this.wantBrief) {
             this.wantBrief = false;
             this.briefPending = true;
             this.send('brief.start');
+          } else if (this.wantHandover) {
+            this.wantHandover = false;
+            this.listen();
+            this.send('handover.start');
           } else if (this.wantListen) {
             this.wantListen = false;
             this.listen();
           }
         },
         onDisconnected: () => {
+          if (this.client !== client) return;
           useApp.getState().set({ voice: 'off', listening: false, botSpeaking: false, typing: false });
           listeningSV.set(0);
         },
@@ -151,7 +165,13 @@ class VoiceSession {
   }
 
   listen(): void {
-    if (!this.client) return;
+    if (!this.client || useApp.getState().voice !== 'ready') {
+      // Not connected (yet): listen as soon as the bot is ready.
+      this.wantListen = true;
+      const v = useApp.getState().voice;
+      if (!this.client || v === 'off' || v === 'error') this.connect({ brief: false, listen: true });
+      return;
+    }
     this.briefPending = false;
     // The mic track stays on (toggling it restarts the level observer); the server's STT gate
     // is the real switch: no audio reaches STT, VAD or billing unless we're listening.

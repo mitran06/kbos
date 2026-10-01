@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { AppState, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
@@ -28,12 +29,13 @@ function TopBar() {
   if (!person) return null;
   const endShift = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    useApp.getState().set({ list: null, draft: null, filed: null, detail: null });
     if (voiceStatus !== 'ready') {
-      useApp.getState().resetSession();
-      router.replace('/');
+      // Still (re)connecting: run the Handover as soon as KB is there.
+      voice.wantHandover = true;
+      if (voiceStatus !== 'connecting') voice.connect({ brief: false });
       return;
     }
-    useApp.getState().set({ list: null, draft: null, filed: null, detail: null });
     voice.listen();
     voice.send('handover.start');
   };
@@ -109,12 +111,23 @@ export default function Home() {
       return;
     }
     voice.connect({ brief: true });
+    activateKeepAwakeAsync('kbos-shift').catch(() => {});
+    // The camera permission prompt and the gallery picker also background the app briefly, so
+    // only drop the voice session if we stay in the background for a while.
+    let bgTimer: ReturnType<typeof setTimeout> | null = null;
     const sub = AppState.addEventListener('change', (st) => {
-      if (st === 'background') voice.disconnect();
-      if (st === 'active' && useApp.getState().person && useApp.getState().voice === 'off') voice.connect({ brief: false });
+      if (st === 'background') {
+        bgTimer = setTimeout(() => voice.disconnect(), 30000);
+      } else if (st === 'active') {
+        if (bgTimer) clearTimeout(bgTimer);
+        bgTimer = null;
+        if (useApp.getState().person && useApp.getState().voice === 'off') voice.connect({ brief: false });
+      }
     });
     return () => {
       sub.remove();
+      if (bgTimer) clearTimeout(bgTimer);
+      deactivateKeepAwake('kbos-shift');
       voice.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

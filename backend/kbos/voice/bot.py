@@ -305,9 +305,9 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
         if t == "listen.start":
             await set_listening(True)
         elif t == "listen.stop":
-            await set_listening(False)
-            if activity.bot_speaking:
+            if activity.bot_speaking:  # cut KB off first, then tidy the gate
                 await worker.queue_frames([InterruptionWorkerFrame()])
+            await set_listening(False)
         elif t == "text.input":
             text = str(data.get("text", "")).strip()
             if text:

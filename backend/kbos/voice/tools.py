@@ -20,7 +20,7 @@ from kbos.domain import tickets as T
 from kbos.domain.checks import add_check
 from kbos.domain.people import DomainError, end_shift, get_person, on_shift, shift_dict
 from kbos.domain.related import related_candidates
-from kbos.models import Check, Machine, Person, ShiftSession, Ticket, TicketAssignee
+from kbos.models import Check, Machine, Person, Photo, ShiftSession, Ticket, TicketAssignee
 from kbos.realtime import hub
 from kbos.telemetry import telemetry
 from kbos.voice.language import detect
@@ -252,7 +252,8 @@ def next_step(state: KBState, possible: list[dict]) -> str:
 async def update_draft(state: KBState, **fields: Any) -> dict:
     if state.draft is None:
         state.draft = {}
-        state.draft_transcript_from = max(0, len(state.transcript) - 1)
+        users = [i for i, line in enumerate(state.transcript) if line["who"] == "user"]
+        state.draft_transcript_from = users[-1] if users else 0
     d = state.draft
     not_english = []
     said = user_said_since_draft(state)
@@ -337,6 +338,11 @@ async def file_ticket(state: KBState, related_ticket_key: str | None = None) -> 
 
 
 async def discard_draft(state: KBState) -> dict:
+    with db.session() as s:  # a discarded Draft's photos must not ride along on the next ticket
+        for p in s.exec(select(Photo).where(Photo.session_id == state.session_id, Photo.ticket_id == None)).all():  # noqa: E711
+            p.session_id = ""
+            s.add(p)
+        s.commit()
     state.draft = None
     state.photos = []
     state.photo_offered = False

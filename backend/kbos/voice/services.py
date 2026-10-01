@@ -107,6 +107,8 @@ class KBSarvamTTS(SarvamTTSService):
                 )
                 await self._send_config()
                 await self._call_event_handler("on_connected")
+                if not self.is_usable:
+                    await self.set_usable(True)
                 return
             except Exception as e:
                 self._websocket = None
@@ -114,7 +116,8 @@ class KBSarvamTTS(SarvamTTSService):
                     break
                 logger.warning(f"sarvam tts connect failed ({e}); retry {attempt + 1}")
                 await asyncio.sleep(0.3 * (attempt + 1))
-        await super()._connect_websocket()
+        # Not fatal: run_tts reconnects lazily on the next sentence.
+        logger.error("sarvam tts: could not connect; will retry on the next sentence")
 
 
 class GnaniTTS(TTSService):
