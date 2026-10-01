@@ -192,6 +192,14 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
     activity = Activity(state, llm)
 
     def refresh() -> None:
+        # Language of the latest real user message in the context (not bracketed app notes).
+        # A bracketed app note (brief/handover/photo) keeps whatever language was set with it.
+        for m in reversed(context.messages):
+            text = m.get("content") if m.get("role") == "user" else None
+            if isinstance(text, str) and text.strip():
+                if not text.startswith("["):
+                    activity.latest_user_lang = detect(text)
+                break
         context.messages[0]["content"] = prompts.system_prompt(state, activity.latest_user_lang)
 
     refresh()

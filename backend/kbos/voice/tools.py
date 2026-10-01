@@ -7,6 +7,7 @@ messages) and the /ws hub. All arguments are English (ADR 0002).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,6 +38,7 @@ class KBState:
     focused: str | None = None
     photos: list[dict] = field(default_factory=list)
     photo_offered: bool = False
+    related_asked: bool = False
     filed: list[str] = field(default_factory=list)
     touched: set[str] = field(default_factory=set)
     mode: str = "chat"  # chat | brief | handover
@@ -215,12 +217,27 @@ QUESTIONS = {
     "severity": "how severe it is (critical, high, medium or low)",
 }
 TEXT_FIELDS = ("title", "symptom", "since", "context")
+SEVERITY_WORDS = re.compile(
+    r"critical|high|medium|low|urgent|serious|severe|emergency|minor|major|safety|stop|band|ruk|rok|"
+    r"क्रिटिकल|हाई|मीडियम|लो|गंभीर|ज़्यादा|ज्यादा|कम|रुक|बंद|ख़तर|खतर",
+    re.I,
+)
+UNSURE_WORDS = re.compile(
+    r"pata nahi|nahi pata|nahin pata|don'?t know|not sure|no idea|maloom nahi|malum nahi|"
+    r"पता नहीं|मालूम नहीं|नहीं पता|pata nahin",
+    re.I,
+)
+
+
+def user_said_since_draft(state: KBState) -> str:
+    return " ".join(line["text"] for line in state.transcript[state.draft_transcript_from:] if line["who"] == "user")
 
 
 def next_step(state: KBState, possible: list[dict]) -> str:
     d = state.draft or {}
     if possible and not d.get("related_ticket_key"):
         p = possible[0]
+        state.related_asked = True
         return (f"ask ONLY whether this is the same problem as {p['key']} ('{p['title']}', {p['status']}"
                 f"{', overdue' if p['overdue'] else ''}); then call update_draft with related_ticket_key "
                 f"'{p['key']}' if yes or 'none' if no")  # fmt: skip
@@ -238,8 +255,14 @@ async def update_draft(state: KBState, **fields: Any) -> dict:
         state.draft_transcript_from = max(0, len(state.transcript) - 1)
     d = state.draft
     not_english = []
+    said = user_said_since_draft(state)
     for k, v in fields.items():
         if v is None or v == "":
+            continue
+        # Never let KB guess: severity only if the user said one, "not given" only if they don't know.
+        if k == "severity" and not SEVERITY_WORDS.search(said):
+            continue
+        if isinstance(v, str) and v.strip().lower() == "not given" and not UNSURE_WORDS.search(said):
             continue
         if k in TEXT_FIELDS and isinstance(v, str) and v.strip().lower() != "not given" and detect(v) == "hi":
             not_english.append(k)
@@ -247,6 +270,8 @@ async def update_draft(state: KBState, **fields: Any) -> dict:
         if k == "machine_code":
             v = str(v).upper().replace(" ", "").replace("-", "")
         if k == "related_ticket_key":
+            if not state.related_asked:
+                continue  # KB must ask "same problem?" before linking
             v = "none" if str(v).strip().lower() in ("none", "no", "") else T.normalize_key(str(v))
         if k == "severity":
             v = str(v).lower()
@@ -272,7 +297,7 @@ async def update_draft(state: KBState, **fields: Any) -> dict:
 async def request_photo(state: KBState, reason: str = "") -> dict:
     state.photo_offered = True
     await state.push({"type": "ui.camera", "reason": reason or "Add a photo"})
-    return {"status": "camera is open on the phone; say one short line (take a photo or tap skip) and wait"}
+    return {"status": "camera is open on the phone; in the user's language say one short line inviting them to take a photo or tap skip, then wait"}
 
 
 async def file_ticket(state: KBState, related_ticket_key: str | None = None) -> dict:
@@ -298,17 +323,24 @@ async def file_ticket(state: KBState, related_ticket_key: str | None = None) -> 
     state.draft = None
     state.photos = []
     state.photo_offered = False
+    state.related_asked = False
     hub.publish("ticket.created", {"ticket": summary, "by": state.person_id})
     if related_summary:
         hub.publish("ticket.updated", {"ticket": related_summary, "by": state.person_id})
     await state.push({"type": "ui.ticket_filed", "ticket": summary})
-    return {"ticket_key": t.key, "assignees": [a["name"] for a in summary["assignees"]], "related": related}
+    return {
+        "ticket_key": t.key,
+        "assignees": [a["name"] for a in summary["assignees"]],
+        "related": related,
+        "note": "the filed card is already on screen; confirm in one short line (key + who it's assigned to)",
+    }
 
 
 async def discard_draft(state: KBState) -> dict:
     state.draft = None
     state.photos = []
     state.photo_offered = False
+    state.related_asked = False
     await state.push({"type": "ui.draft", "draft": None})
     return {"ok": True}
 

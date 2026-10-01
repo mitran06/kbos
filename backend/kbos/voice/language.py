@@ -6,6 +6,7 @@ import re
 
 from pipecat.frames.frames import (
     Frame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -59,7 +60,9 @@ class ReplyLanguage(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, LLMFullResponseStartFrame):
+        if isinstance(frame, InterruptionFrame):
+            self._decided, self._text, self._held = True, "", []
+        elif isinstance(frame, LLMFullResponseStartFrame):
             self._decided, self._text, self._held = False, "", []
         elif isinstance(frame, LLMTextFrame) and not self._decided:
             self._held.append((frame, direction))
