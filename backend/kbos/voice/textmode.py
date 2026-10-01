@@ -21,7 +21,7 @@ from kbos.domain.people import get_person
 from kbos.models import ShiftSession
 from kbos.voice import prompts
 from kbos.voice.language import detect
-from kbos.voice.tools import TOOLS, KBState, handover_tickets, run_tool
+from kbos.voice.tools import TOOLS, KBState, closed_this_shift, handover_tickets, run_tool
 
 SARVAM_URL = "https://api.sarvam.ai/v1/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -156,5 +156,5 @@ class TextSession:
             self.lang = get_person(s, self.state.person_id).preferred_language
         self.state.mode = "handover"
         self.state.handover_keys = keys
-        self.messages.append({"role": "user", "content": prompts.handover_instruction(keys, self.lang)})
+        self.messages.append({"role": "user", "content": prompts.handover_instruction(keys, self.lang, closed_this_shift(self.state))})
         return await self._run(Turn(user="[handover]"))

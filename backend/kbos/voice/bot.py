@@ -63,7 +63,7 @@ from kbos.voice import prompts
 from kbos.voice.gate import GatedSarvamSTT
 from kbos.voice.language import ReplyLanguage, detect
 from kbos.voice.services import GnaniTTS, KBSarvamTTS, make_llm
-from kbos.voice.tools import TOOLS, KBState, discard_draft, draft_view, handover_tickets, run_tool
+from kbos.voice.tools import TOOLS, KBState, closed_this_shift, discard_draft, draft_view, handover_tickets, run_tool
 
 LANG_TAG = {"hi": " [reply in Hindi, Devanagari]", "en": " [reply in English]"}
 UI_ONLY = {"show_tickets"}  # results don't change what KB says: skip the 2nd LLM call if KB already spoke
@@ -327,7 +327,7 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
             state.mode = "handover"
             state.handover_keys = keys
             activity.latest_user_lang = person.preferred_language
-            await say_after(prompts.handover_instruction(keys, person.preferred_language))
+            await say_after(prompts.handover_instruction(keys, person.preferred_language, closed_this_shift(state)))
         elif t == "photo.attached":
             ids = [int(i) for i in data.get("photo_ids", [])]
             with db.session() as s:

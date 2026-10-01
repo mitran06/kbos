@@ -404,6 +404,11 @@ async def end_shift_tool(state: KBState, summary: str = "") -> dict:
     state.shift_ended = True
     hub.publish("shift.ended", {"shift_session": out})
     await state.push({"type": "ui.shift_ended", "summary": summary})
+    closed = closed_this_shift(state)
+    if closed:
+        return {"ok": True, "note": "shift ended. In the user's language, first say by machine and problem who closed "
+                f"their tickets ({'; '.join(closed)}), e.g. 'The 4B vibration you filed is closed: Imran replaced the "
+                "spindle bearing.', then a short goodbye. Two short sentences max."}  # fmt: skip
     return {"ok": True, "note": "shift ended; say one short goodbye line"}
 
 
@@ -457,3 +462,21 @@ def handover_tickets(state: KBState) -> list[str]:
         for c in s.exec(select(Check).where(Check.author_id == state.person_id, Check.created_at >= since)).all():
             keys.add(s.get(Ticket, c.ticket_id).key)
         return [k for k in sorted(keys) if T.get_ticket(s, k).status != "closed"]
+
+
+def closed_this_shift(state: KBState) -> list[str]:
+    """Tickets this person filed or touched this shift that someone has since closed."""
+    with db.session() as s:
+        ss = s.get(ShiftSession, state.shift_session_id) if state.shift_session_id else None
+        since = ss.started_at if ss else db.now()
+        out = []
+        for t in s.exec(select(Ticket).where(Ticket.status == "closed", Ticket.closed_at >= since)).all():
+            if t.key in state.touched or t.reporter_id == state.person_id:
+                last = checks_of_key(s, t)
+                who = last.author_id and s.get(Person, last.author_id)
+                out.append(f"{t.key} ({t.machine_code} {t.title}) closed by {who.name if who else 'someone'}")
+        return out
+
+
+def checks_of_key(s, t: Ticket) -> Check:
+    return s.exec(select(Check).where(Check.ticket_id == t.id).order_by(Check.created_at.desc())).first()

@@ -104,13 +104,16 @@ def brief_instruction(data: dict, lang: str) -> str:
     )
 
 
-def handover_instruction(keys: list[str], lang: str) -> str:
+def handover_instruction(keys: list[str], lang: str, closed: list[str] | None = None) -> str:
     language = "Hindi (Devanagari)" if lang == "hi" else "English"
+    done = f" Already closed this shift (just mention it): {'; '.join(closed)}." if closed else ""
     if not keys:
-        return (f"[Shift end] Handover in {language}: the user touched no open tickets this shift. Say one friendly "
-                "line, then call end_shift with a one-sentence summary.")  # fmt: skip
+        say = (" Start your reply by saying, by machine and problem, who closed it, e.g. 'The 4B vibration you "
+               "filed is already closed: Imran replaced the spindle bearing.'") if closed else ""  # fmt: skip
+        return (f"[Shift end] Handover in {language}: none of the user's tickets are still open.{done}{say} Then "
+                "call end_shift with a one-sentence English summary and say a short goodbye.")  # fmt: skip
     return (
-        f"[Shift end] Run the Handover in {language}. Walk through these tickets one at a time: {', '.join(keys)}. "
+        f"[Shift end] Run the Handover in {language}.{done} Walk through these open tickets one at a time: {', '.join(keys)}. "
         "For each, ask briefly what the situation is now (e.g. '4B vibration: what's the situation now?'), then record "
         "it with add_check (status change only if they say so). Apply the Check rules. After the last one, call "
         "end_shift with a short English summary of the state of each ticket, then say a short goodbye. Start with the first ticket now."
