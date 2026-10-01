@@ -370,6 +370,8 @@ async def add_check_tool(
     await state.push({"type": "ui.ticket", "ticket": detail, "highlight": "check"})
     out = {"ok": True, "ticket_key": t.key, "status": t.status, "unclear": c.unclear,
            "next_check_at": check["next_check_at"]}  # fmt: skip
+    if c.unclear:
+        out["note"] = "recorded with the amber Unclear flag; just confirm that in a few words, don't ask again"
     if state.mode == "handover":
         state.handover_done.add(t.key)
         left = [k for k in state.handover_keys if k not in state.handover_done]
