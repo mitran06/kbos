@@ -62,7 +62,7 @@ from kbos.models import GlossaryTerm, Photo, ShiftSession
 from kbos.voice import prompts
 from kbos.voice.gate import GatedSarvamSTT
 from kbos.voice.language import ReplyLanguage, detect
-from kbos.voice.services import KBSarvamTTS, make_llm
+from kbos.voice.services import GnaniTTS, KBSarvamTTS, make_llm
 from kbos.voice.tools import TOOLS, KBState, discard_draft, draft_view, handover_tickets, run_tool
 
 LANG_TAG = {"hi": " [reply in Hindi, Devanagari]", "en": " [reply in English]"}
@@ -176,13 +176,16 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
     )
     llm = make_llm(pool, key_index)
     start_lang = "hi-IN" if person.preferred_language == "hi" else "en-IN"
-    tts = KBSarvamTTS(
-        api_key=key,
-        sample_rate=24000,
-        settings=SarvamTTSService.Settings(
-            model="bulbul:v3", voice=settings.tts_voice, language=start_lang, min_buffer_size=30, pace=1.05
-        ),
-    )
+    if settings.tts_provider == "gnani":
+        tts = GnaniTTS(api_key=settings.gnani_key, sample_rate=24000)
+    else:
+        tts = KBSarvamTTS(
+            api_key=key,
+            sample_rate=24000,
+            settings=SarvamTTSService.Settings(
+                model="bulbul:v3", voice=settings.tts_voice, language=start_lang, min_buffer_size=30, pace=1.05
+            ),
+        )
     reply_lang = ReplyLanguage(initial=start_lang)
 
     tools = ToolsSchema(
@@ -238,7 +241,8 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
         ),
     )
     pipeline = Pipeline([
-        transport.input(), stt, user_agg, ContextRefresher(refresh), llm, reply_lang, tts,
+        transport.input(), stt, user_agg, ContextRefresher(refresh), llm,
+        *([reply_lang] if settings.tts_provider != "gnani" else []), tts,
         transport.output(), assistant_agg,
     ])  # fmt: skip
 

@@ -46,7 +46,8 @@ class VoiceSession {
       callbacks: {
         onTransportStateChanged: (s: TransportState) => {
           if (s === 'disconnected' || s === 'error') {
-            useApp.getState().set({ voice: s === 'error' ? 'error' : 'off', listening: false, botSpeaking: false });
+            useApp.getState().set({ voice: s === 'error' ? 'error' : 'off', listening: false, botSpeaking: false, typing: false });
+            listeningSV.set(0);
           }
         },
         onConnected: () => {
@@ -63,7 +64,10 @@ class VoiceSession {
             this.listen();
           }
         },
-        onDisconnected: () => useApp.getState().set({ voice: 'off', listening: false, botSpeaking: false }),
+        onDisconnected: () => {
+          useApp.getState().set({ voice: 'off', listening: false, botSpeaking: false, typing: false });
+          listeningSV.set(0);
+        },
         onError: (e) => {
           const msg = (e as { data?: { error?: string } })?.data?.error ?? 'voice error';
           console.log('[kb] error', msg);
@@ -134,7 +138,7 @@ class VoiceSession {
         // already gone
       }
     }
-    useApp.getState().set({ voice: 'off', listening: false, botSpeaking: false });
+    useApp.getState().set({ voice: 'off', listening: false, botSpeaking: false, typing: false });
     listeningSV.set(0);
   }
 
@@ -189,8 +193,10 @@ class VoiceSession {
         set({ filed: m.ticket, draft: null, camera: null });
         break;
       case 'ui.session_end':
-        // Typing doesn't need the mic: keep the pill (and its text field) open.
-        if (!useApp.getState().typing && !useApp.getState().typeMode) this.stop();
+        // Typing doesn't need the mic, but keep the pill honest: re-open the gate (audio is held,
+        // not billed, until someone actually speaks) so the field and the orb stay truthful.
+        if (useApp.getState().typing || useApp.getState().typeMode) this.send('listen.start');
+        else this.stop();
         break;
       case 'ui.shift_ended':
         set({ handover: m.summary || 'Handover recorded' });

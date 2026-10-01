@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 
+import httpx
 import openai
 from loguru import logger
+from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
 from pipecat.services.openrouter.llm import OpenRouterLLMService
 from pipecat.services.sarvam._sdk import sdk_headers
 from pipecat.services.sarvam.llm import SarvamLLMService
 from pipecat.services.sarvam.tts import SarvamTTSService
+from pipecat.services.tts_service import TTSService
 from websockets.protocol import State
 
 from kbos.config import settings
@@ -110,3 +115,53 @@ class KBSarvamTTS(SarvamTTSService):
                 logger.warning(f"sarvam tts connect failed ({e}); retry {attempt + 1}")
                 await asyncio.sleep(0.3 * (attempt + 1))
         await super()._connect_websocket()
+
+
+class GnaniTTS(TTSService):
+    """Fallback TTS (TTS_PROVIDER=gnani): Gnani Timbre v2.5 over SSE, raw 16-bit PCM.
+
+    Gnani sits behind Cloudflare, which rejects requests without a browser User-Agent.
+    The Hinglish voice "Poorvi" with language "auto" handles English, Hindi and mixed text.
+    """
+
+    URL = "https://api.vachana.ai/api/v1/tts/sse"
+    UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
+
+    def __init__(self, *, api_key: str, voice: str = "Poorvi", sample_rate: int = 24000, **kwargs) -> None:
+        super().__init__(sample_rate=sample_rate, **kwargs)
+        self._api_key = api_key
+        self._voice = voice
+        self._client = httpx.AsyncClient(timeout=30)
+
+    def can_generate_metrics(self) -> bool:
+        return True
+
+    async def run_tts(self, text: str, context_id: str):
+        body = {
+            "text": text,
+            "voice": self._voice,
+            "model": "timbre-v2.5",
+            "language": "auto",
+            "audio_config": {"sample_rate": self.sample_rate, "num_channels": 1, "sample_width": 2,
+                             "encoding": "linear_pcm", "container": "raw"},
+        }  # fmt: skip
+        headers = {"X-API-Key-ID": self._api_key, "User-Agent": self.UA}
+        try:
+            await self.start_ttfb_metrics()
+            async with self._client.stream("POST", self.URL, json=body, headers=headers) as r:
+                if r.status_code != 200:
+                    yield ErrorFrame(error=f"Gnani TTS {r.status_code}")
+                    return
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    audio = json.loads(line[5:]).get("audio")
+                    if audio:
+                        await self.stop_ttfb_metrics()
+                        yield TTSAudioRawFrame(
+                            audio=base64.b64decode(audio), sample_rate=self.sample_rate, num_channels=1,
+                            context_id=context_id,
+                        )  # fmt: skip
+            await self.start_tts_usage_metrics(text)
+        except Exception as e:
+            yield ErrorFrame(error=f"Gnani TTS failed: {e}")
