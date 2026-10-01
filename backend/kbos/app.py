@@ -378,6 +378,13 @@ def create_app(db_path: Path | str | None = None, *, probe_keys: bool = True) ->
     app.mount("/uploads", StaticFiles(directory=settings.uploads_dir), name="uploads")
     dash = settings.dashboard_dir
 
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon() -> FileResponse:
+        icon = dash / "favicon.svg"
+        if not icon.exists():
+            raise HTTPException(404)
+        return FileResponse(icon)
+
     @app.get("/admin")
     @app.get("/admin/{path:path}")
     async def admin(path: str = "") -> FileResponse:
