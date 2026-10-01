@@ -32,7 +32,11 @@
 | end of speech → Draft card update | ≤ 1.0 s | 0.85–1.0 s |
 | Sarvam STT, speech_end → final transcript | | 0.16–0.3 s |
 
+On the phone (release APK, USB tether), spoken turns measured 1.4–1.7 s server-side (end of speech → first audio sent); the Brief starts about 0.7 s after login.
+
 The last 10 turn breakdowns are at `GET /api/health` (`latency`) and in the app's Settings.
+
+**Credits:** Sarvam key #1 ran out of credit overnight (402) and is skipped automatically. The pool shows it as "exhausted". Live voice sessions take keys from the back (8, 7, 6, …), which are the least used; the text-mode tests use keys 1–3. A conversation-minute costs about ₹2, so the remaining keys have plenty.
 
 **WARP finding:** with Cloudflare WARP on, Sarvam LLM time-to-first-token is about 0.23 s; with it off, about 0.16 s. TTS first audio is about 0.25 s on and 0.20 s off, and STT is the same either way. WARP costs about 50–70 ms per turn, which is not worth fighting over. If the venue Wi-Fi is flaky with WARP, turn it off (`warp-cli disconnect`).
 
@@ -49,7 +53,10 @@ The last 10 turn breakdowns are at `GET /api/health` (`latency`) and in the app'
 
 ```bash
 cd ~/projects/team/nimbus_hack/kbos
-scripts/start.sh --reset      # backend + dashboard on :7860, resets demo data once it's up
+scripts/start.sh --reset      # backend + dashboard on :7860, resets demo data once it's up (Ctrl-C stops)
+# or detached, surviving the terminal (this is how it was left running):
+setsid nohup scripts/start.sh --reset > backend/data/server.log 2>&1 < /dev/null &
+# stop it: fuser -k 7860/tcp
 ```
 - The dashboard is at `http://localhost:7860/admin`. Hard-reload it once after any rebuild.
 - `start.sh` prints the server URLs the phones can use.
