@@ -17,9 +17,11 @@ from collections import deque
 from typing import Any
 
 from loguru import logger
-from pipecat.frames.frames import Frame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessorSetup
+from pipecat.services.sarvam._sdk import sdk_headers
 from pipecat.services.sarvam.stt import SarvamRealtimeSTTService
+from websockets.protocol import State
 
 PRE_ROLL_S = 0.6
 CONNECT_BUFFER_S = 2.0
@@ -34,6 +36,7 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         self._ring: deque[bytes] = deque()
         self._ring_bytes = 0
         self._connecting: asyncio.Task | None = None
+        self._keepalive: asyncio.Task | None = None
         self.sent_bytes = 0  # audio actually sent to Sarvam (billing proxy)
 
     # -- gate ---------------------------------------------------------------
@@ -48,9 +51,25 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         self._gate_open = True
         self._in_speech = False
         self._clear_ring()
+        self._ensure_connecting()
+        if not self._keepalive:
+            self._keepalive = self.create_task(self._keepalive_loop())
+        logger.info("stt gate open")
+
+    def _ensure_connecting(self) -> None:
         if not self._is_websocket_open() and not self._connecting:
             self._connecting = self.create_task(self._lazy_connect())
-        logger.info("stt gate open")
+
+    async def _keepalive_loop(self) -> None:
+        # Sarvam drops a realtime socket that hears nothing for ~2 s; we hold audio between
+        # utterances (no billing), so keep it alive with pings instead.
+        while True:
+            await asyncio.sleep(1.0)
+            if self._gate_open and not self._in_speech and self._is_websocket_open():
+                try:
+                    await self._send_json({"event": "ping"})
+                except Exception:
+                    pass
 
     async def close_gate(self) -> None:
         if not self._gate_open:
@@ -58,9 +77,11 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         self._gate_open = False
         self._in_speech = False
         self._clear_ring()
-        if self._connecting:
-            await self.cancel_task(self._connecting)
-            self._connecting = None
+        for attr in ("_connecting", "_keepalive"):
+            task = getattr(self, attr)
+            if task:
+                await self.cancel_task(task)
+                setattr(self, attr, None)
         await self._disconnect()
         logger.info(f"stt gate closed (sent {self.sent_bytes / 32000:.1f}s audio so far)")
 
@@ -73,6 +94,28 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
             # speech started while connecting: replay what we held
             await self._send_json({"event": "speech_start"})
             await self._flush_ring()
+
+    async def _connect_websocket(self):
+        """Retry transient gateway failures (Sarvam sometimes answers 404 for a moment) before
+        letting the parent report a connection error."""
+        for attempt in range(4):
+            if self._websocket and self._websocket.state is State.OPEN:
+                return
+            try:
+                self._websocket = await self._websocket_connect(
+                    self._build_ws_url(),
+                    additional_headers={"API-SUBSCRIPTION-KEY": self._api_key},
+                    user_agent_header=sdk_headers()["User-Agent"],
+                )
+                await self._call_event_handler("on_connected")
+                return
+            except Exception as e:
+                self._websocket = None
+                if not self._gate_open:
+                    return
+                logger.warning(f"sarvam stt connect failed ({e}); retry {attempt + 1}")
+                await asyncio.sleep(0.3 * (attempt + 1))
+        await super()._connect_websocket()
 
     # -- pipecat hooks ----------------------------------------------------------
 
@@ -87,6 +130,10 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         return params
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
+        if isinstance(frame, InputAudioRawFrame) and not self._gate_open:
+            # Closed gate: the mic doesn't exist as far as the pipeline is concerned, so room
+            # noise can't open a user turn (VAD) and nothing is billed.
+            return
         if isinstance(frame, VADUserStartedSpeakingFrame):
             await self._speech_started()
             # let the base class see the frame for metrics, minus its own speech_start
@@ -105,6 +152,19 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
         if self._is_websocket_open():
             await self._send_json({"event": "speech_start"})
             await self._flush_ring()
+        else:
+            self._ensure_connecting()  # audio is held until the socket is back
+
+    async def _maybe_try_reconnect(self, error_message, report_error, error=None) -> bool:
+        """A dropped socket is not fatal here: end the receive loop quietly and let the next
+        utterance reconnect lazily (with its audio held), instead of marking STT unusable."""
+        if not self._disconnecting:
+            logger.warning(f"sarvam stt socket dropped ({error or error_message}); will reconnect on demand")
+        self._websocket = None
+        self._receive_task = None
+        if self._gate_open and self._in_speech:
+            self._ensure_connecting()
+        return False
 
     async def _speech_stopped(self) -> None:
         if not self._gate_open or not self._in_speech:

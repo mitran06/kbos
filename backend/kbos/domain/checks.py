@@ -7,8 +7,8 @@ import re
 from sqlmodel import Session
 
 from kbos import db
-from kbos.domain.people import DomainError
-from kbos.domain.tickets import default_next_check, get_ticket
+from kbos.domain.people import DomainError, on_shift
+from kbos.domain.tickets import assignees_of, default_next_check, get_ticket
 from kbos.models import STATUSES, Check, Person, Ticket
 
 BARE = {"", "checked", "check", "ok", "okay", "done", "fine", "all ok", "all good", "fixed", "not given",
@@ -30,6 +30,15 @@ def normalize_status(status: str | None) -> str | None:
     if v not in STATUSES:
         raise DomainError(f"status must be one of open, in progress, monitoring, closed (got {status})")
     return v
+
+
+def _fallback_owner(s: Session, t: Ticket) -> int | None:
+    """Monitoring always has an owner: the first assignee, else the on-shift Supervisor."""
+    assignees = assignees_of(s, t)
+    if assignees:
+        return assignees[0].id
+    sups = on_shift(s, "supervisor")
+    return sups[0].id if sups else None
 
 
 def add_check(
@@ -76,10 +85,11 @@ def add_check(
         t.status = status_to
         if status_to == "monitoring":
             t.next_check_at = default_next_check(next_check_minutes)
-            t.monitoring_owner_id = actor.id if actor else t.monitoring_owner_id
+            t.monitoring_owner_id = actor.id if actor else (t.monitoring_owner_id or _fallback_owner(s, t))
             c.next_check_at = t.next_check_at
         else:
             t.next_check_at = None
+            t.monitoring_owner_id = None
         t.closed_at = t_now if status_to == "closed" else None
     elif t.status == "monitoring" and next_check_minutes:
         t.next_check_at = default_next_check(next_check_minutes)

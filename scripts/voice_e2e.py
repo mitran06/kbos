@@ -118,6 +118,10 @@ class Session:
             asyncio.ensure_future(self._drain(track))
 
         async with httpx.AsyncClient(timeout=20) as http:
+            if self.body.get("person_id") and not self.body.get("shift_session_id"):
+                r = await http.post(f"{self.server}/api/shifts/start", json={"person_id": self.body["person_id"]})
+                r.raise_for_status()
+                self.body["shift_session_id"] = r.json()["shift_session"]["id"]
             r = await http.post(f"{self.server}/start", json={"transport": "webrtc", "body": self.body})
             r.raise_for_status()
             sid = r.json()["sessionId"]
@@ -212,13 +216,15 @@ class Session:
             if m.get("type") == "llm-function-call-started"
         ]
         server = [m["data"] for m in evs if m.get("type") == "server-message"]
+        latency = [s for s in server if s.get("type") == "ui.latency"]
         return {
             "turn": name,
             "audio_s": round(secs, 1),
             "heard": " ".join(heard),
             "said": " ".join(said),
             "tools": tools,
-            "server_messages": [s.get("type") for s in server],
+            "server_messages": [s.get("type") for s in server if s.get("type") != "ui.latency"],
+            "latency": latency[-1]["lines"][-1] if latency else None,
             "v2v_s": round(first_audio - t_end, 2) if first_audio else None,
         }
 

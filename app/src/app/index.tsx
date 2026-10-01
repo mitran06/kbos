@@ -22,7 +22,15 @@ export default function Spike() {
       callbacks: {
         onTransportStateChanged: (s) => setState(s),
         onConnected: () => c.updateMic('SPEAKERPHONE'),
-        onBotReady: () => add('bot ready'),
+        onBotReady: () => {
+          add('bot ready');
+          try {
+            c.sendClientMessage('listen.start', {});
+            add('sent listen.start (direct)');
+          } catch (e) {
+            add('direct send failed ' + String(e));
+          }
+        },
         onUserTranscript: (t) => t.final && add(`you: ${t.text}`),
         onBotOutput: (o) => o.spoken_status === 'completed' && add(`kb: ${o.text}`),
         onServerMessage: (d) => add(`server msg: ${JSON.stringify(d)}`),
@@ -49,6 +57,9 @@ export default function Spike() {
       <View style={{ flexDirection: 'row', gap: 12, marginVertical: 12 }}>
         <Pressable onPress={connect} style={{ backgroundColor: '#111', padding: 14, borderRadius: 10 }}>
           <Text style={{ color: '#fff' }}>Connect</Text>
+        </Pressable>
+        <Pressable onPress={() => { try { client.current?.sendClientMessage('listen.start', {}); add('sent listen.start'); } catch (e) { add('send failed ' + String(e)); } }} style={{ backgroundColor: '#2563eb', padding: 14, borderRadius: 10 }}>
+          <Text style={{ color: '#fff' }}>Listen</Text>
         </Pressable>
         <Pressable onPress={() => client.current?.disconnect()} style={{ backgroundColor: '#999', padding: 14, borderRadius: 10 }}>
           <Text style={{ color: '#fff' }}>Leave</Text>

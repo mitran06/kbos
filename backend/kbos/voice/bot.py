@@ -1,13 +1,36 @@
-"""Per-session Pipecat pipeline (M1 spike: STT -> LLM -> TTS, no tools)."""
+"""Per-session voice pipeline for one phone.
+
+transport.input -> STT gate -> user aggregator (Silero VAD + Smart Turn)
+-> context refresher (live system prompt) -> LLM + tools -> ReplyLanguage
+-> TTS -> transport.output -> assistant aggregator
+"""
 
 from __future__ import annotations
 
-import os
+import asyncio
+import time
 from typing import Any
 
 from loguru import logger
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    Frame,
+    FunctionCallResultProperties,
+    InterruptionWorkerFrame,
+    LLMContextFrame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    LLMMessagesAppendFrame,
+    LLMTextFrame,
+    TranscriptionFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
+)
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -16,31 +39,121 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.services.sarvam.llm import SarvamLLMService
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frameworks.rtvi import RTVIFunctionCallReportLevel, RTVIObserverParams
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
+from sqlmodel import select
 
+from kbos import db
 from kbos.config import settings
+from kbos.domain.brief import brief_data
+from kbos.domain.people import get_person
+from kbos.models import GlossaryTerm, Photo, ShiftSession
+from kbos.voice import prompts
 from kbos.voice.gate import GatedSarvamSTT
-from kbos.voice.keypool import KeyPool
+from kbos.voice.language import ReplyLanguage, detect
+from kbos.voice.services import KBSarvamTTS, make_llm
+from kbos.voice.tools import TOOLS, KBState, discard_draft, draft_view, handover_tickets, run_tool
 
-SYSTEM = (
-    "You are KB, the voice assistant inside KBOS, a factory ticketing app. "
-    "Reply in one or two short spoken sentences, no lists, no markdown, no emojis. "
-    "Mirror the language of the user's latest message: English gets English; Hindi or Hinglish gets Hindi "
-    "written in Devanagari, keeping technical English words in Latin script."
-)
+UI_ONLY = {"show_tickets"}  # results don't change what KB says: skip the 2nd LLM call if KB already spoke
+MACHINE_TERMS = ["4B", "2A", "3C", "1D", "5A", "6B"]
+
+
+class ContextRefresher(FrameProcessor):
+    """Rewrites the system message (live context) right before every LLM run."""
+
+    def __init__(self, refresh) -> None:
+        super().__init__()
+        self._refresh = refresh
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
+            self._refresh()
+        await self.push_frame(frame, direction)
+
+
+class Activity(BaseObserver):
+    """Watches the pipeline for speech activity (idle timeout) and transcript lines."""
+
+    def __init__(self, state: KBState, llm) -> None:
+        super().__init__()
+        self.state = state
+        self.llm = llm
+        self.last = time.monotonic()
+        self.bot_speaking = False
+        self.user_speaking = False
+        self.latest_user_lang = "en"
+        self._reply: list[str] = []
+        self._seen: set[int] = set()
+
+    async def on_push_frame(self, data: FramePushed):
+        f = data.frame
+        if f.id in self._seen:
+            return
+        if isinstance(f, (BotStartedSpeakingFrame, BotStoppedSpeakingFrame, UserStartedSpeakingFrame,
+                          UserStoppedSpeakingFrame, TranscriptionFrame)):  # fmt: skip
+            self._seen.add(f.id)
+            self.last = time.monotonic()
+            if isinstance(f, BotStartedSpeakingFrame):
+                self.bot_speaking = True
+            elif isinstance(f, BotStoppedSpeakingFrame):
+                self.bot_speaking = False
+            elif isinstance(f, UserStartedSpeakingFrame):
+                self.user_speaking = True
+            elif isinstance(f, UserStoppedSpeakingFrame):
+                self.user_speaking = False
+            elif isinstance(f, TranscriptionFrame) and f.text.strip():
+                self.latest_user_lang = detect(f.text)
+                self.state.transcript.append({"who": "user", "text": f.text, "lang": self.latest_user_lang})
+        elif data.source is self.llm and isinstance(f, (LLMFullResponseStartFrame, LLMTextFrame, LLMFullResponseEndFrame)):
+            self._seen.add(f.id)
+            if isinstance(f, LLMFullResponseStartFrame):
+                self._reply = []
+            elif isinstance(f, LLMTextFrame):
+                self._reply.append(f.text)
+            elif self._reply:
+                text = "".join(self._reply).strip()
+                if text:
+                    self.state.transcript.append({"who": "kb", "text": text, "lang": detect(text)})
+                self._reply = []
+        if len(self._seen) > 5000:
+            self._seen.clear()
 
 
 async def run_bot(webrtc_connection: Any, live, manager) -> None:
-    pool: KeyPool = manager.pool
+    pool = manager.pool
     body = live.body
     key_index = pool.next_index()
     key = pool.key(key_index)
-    device_id = body.get("device_id", "?")
-    logger.info(f"bot session start device={device_id} key=#{key_index + 1}")
+    person_id = int(body.get("person_id") or 1)
+    with db.session() as s:
+        person = get_person(s, person_id)
+        glossary = [g.term for g in s.exec(select(GlossaryTerm)).all()]
+    live.person_name = person.name
+    tag = f"{person.name.split()[0]}#{live.id[:4]}"
+    logger.info(f"[{tag}] voice session start key=#{key_index + 1}")
+
+    worker_ref: dict[str, PipelineWorker] = {}
+
+    async def push(msg: dict) -> None:
+        w = worker_ref.get("w")
+        if w is not None:
+            await w.rtvi.send_server_message(msg)
+
+    state = KBState(
+        person_id=person_id,
+        shift_session_id=body.get("shift_session_id"),
+        session_id=live.id,
+        push=push,
+    )
+    live.state = {"listening": False}
 
     transport = SmallWebRTCTransport(
         webrtc_connection=webrtc_connection,
@@ -49,69 +162,180 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
     stt = GatedSarvamSTT(
         api_key=key,
         sample_rate=16000,
-        keyterms=["KB", "KBOS", "4B", "2A", "3C", "1D", "5A", "6B", "vibration", "Monitoring", "ticket"],
+        keyterms=["KB", *MACHINE_TERMS, "Monitoring", "vibration", *glossary],
+        ttfs_p99_latency=1.6,
         settings=GatedSarvamSTT.Settings(
-            model=settings.stt_model,
-            language_code=settings.stt_language,
-            mode=settings.stt_mode,
-            stream_type="fast",
+            model=settings.stt_model, language_code=settings.stt_language, mode=settings.stt_mode, stream_type="fast"
         ),
     )
-    llm = SarvamLLMService(
-        api_key=key,
-        settings=SarvamLLMService.Settings(
-            model="sarvam-105b-conversations", system_instruction=SYSTEM, max_tokens=300
-        ),
-    )
-    tts = SarvamTTSService(
+    llm = make_llm(pool, key_index)
+    start_lang = "hi-IN" if person.preferred_language == "hi" else "en-IN"
+    tts = KBSarvamTTS(
         api_key=key,
         sample_rate=24000,
         settings=SarvamTTSService.Settings(
-            model="bulbul:v3", voice=settings.tts_voice, language="en-IN", min_buffer_size=30
+            model="bulbul:v3", voice=settings.tts_voice, language=start_lang, min_buffer_size=30, pace=1.05
         ),
     )
-    context = LLMContext()
+    reply_lang = ReplyLanguage(initial=start_lang)
+
+    tools = ToolsSchema(
+        standard_tools=[
+            FunctionSchema(
+                name=t["name"], description=t["description"],
+                properties=t["parameters"]["properties"], required=t["parameters"]["required"],
+            )
+            for t in TOOLS
+        ]
+    )  # fmt: skip
+    context = LLMContext(messages=[{"role": "system", "content": ""}], tools=tools)
+    activity = Activity(state, llm)
+
+    def refresh() -> None:
+        context.messages[0]["content"] = prompts.system_prompt(state, activity.latest_user_lang)
+
+    refresh()
+
+    async def tool_handler(params: FunctionCallParams) -> None:
+        name = params.function_name
+        result = await run_tool(state, name, dict(params.arguments or {}))
+        refresh()
+        run_llm = not (name in UI_ONLY and getattr(llm, "spoke", False) and "error" not in result)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=run_llm))
+
+    for t in TOOLS:
+        llm.register_function(t["name"], tool_handler, cancel_on_interruption=t["name"] in UI_ONLY)
+
     user_agg, assistant_agg = LLMContextAggregatorPair(
-        context, user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
+        context,
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=SileroVADAnalyzer(),
+            # A late final transcript must not open a phantom turn and interrupt KB.
+            user_turn_strategies=UserTurnStrategies(start=[VADUserTurnStartStrategy()]),
+        ),
     )
-    pipeline = Pipeline([transport.input(), stt, user_agg, llm, tts, transport.output(), assistant_agg])
+    pipeline = Pipeline([
+        transport.input(), stt, user_agg, ContextRefresher(refresh), llm, reply_lang, tts,
+        transport.output(), assistant_agg,
+    ])  # fmt: skip
 
     latency = UserBotLatencyObserver()
 
     @latency.event_handler("on_latency_breakdown")
     async def on_breakdown(observer, breakdown):
-        for line in breakdown.turn_contribution_lines():
-            logger.info(f"[latency {device_id}] {line}")
+        lines = breakdown.turn_contribution_lines()
+        for line in lines:
+            logger.info(f"[latency {tag}] {line}")
+        entry = {"at": time.strftime("%H:%M:%S"), "person": person.name, "lines": [ln.strip() for ln in lines]}
+        manager.record_latency(entry)
+        await push({"type": "ui.latency", **entry})
 
     worker = PipelineWorker(
         pipeline,
-        params=PipelineParams(
-            audio_in_sample_rate=16000, audio_out_sample_rate=24000, enable_metrics=True
-        ),
-        observers=[latency],
+        params=PipelineParams(audio_in_sample_rate=16000, audio_out_sample_rate=24000, enable_metrics=True),
+        observers=[latency, activity],
         idle_timeout_secs=None,
+        rtvi_observer_params=RTVIObserverParams(function_call_report_level={"*": RTVIFunctionCallReportLevel.NAME}),
     )
+    worker_ref["w"] = worker
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
 
-    @worker.rtvi.event_handler("on_client_ready")
-    async def on_client_ready(rtvi):
-        context.add_message({"role": "user", "content": "Say a one-line hello as KB."})
-        await worker.queue_frames([LLMRunFrame()])
-        if body.get("auto_listen", True):
+    async def say_after(note: str) -> None:
+        refresh()
+        await worker.queue_frames([LLMMessagesAppendFrame([{"role": "user", "content": note}], run_llm=True)])
+
+    async def set_listening(on: bool, reason: str = "stop") -> None:
+        live.state["listening"] = on
+        if on:
+            activity.last = time.monotonic()
             await stt.open_gate()
+        else:
+            await stt.close_gate()
+
+    async def idle_watch() -> None:
+        while True:
+            await asyncio.sleep(0.5)
+            if (
+                stt.gate_open
+                and not activity.bot_speaking
+                and not activity.user_speaking
+                and time.monotonic() - activity.last > settings.idle_timeout_s
+            ):
+                logger.info(f"[{tag}] idle {settings.idle_timeout_s:.0f}s: closing the gate")
+                await set_listening(False)
+                await push({"type": "ui.session_end", "reason": "idle"})
+            if state.shift_ended and not activity.bot_speaking and time.monotonic() - activity.last > 1.5:
+                state.shift_ended = False
+                await set_listening(False)
+
+    watcher = asyncio.create_task(idle_watch())
 
     @worker.rtvi.event_handler("on_client_message")
     async def on_client_message(rtvi, msg):
-        logger.info(f"client message {msg.type}")
-        if msg.type == "listen.start":
-            await stt.open_gate()
-        elif msg.type == "listen.stop":
-            await stt.close_gate()
+        t, data = msg.type, (msg.data or {})
+        logger.info(f"[{tag}] client {t}")
+        if t == "listen.start":
+            await set_listening(True)
+        elif t == "listen.stop":
+            await set_listening(False)
+            if activity.bot_speaking:
+                await worker.queue_frames([InterruptionWorkerFrame()])
+        elif t == "text.input":
+            text = str(data.get("text", "")).strip()
+            if text:
+                activity.latest_user_lang = detect(text)
+                state.transcript.append({"who": "user", "text": text, "lang": activity.latest_user_lang})
+                activity.last = time.monotonic()
+                await say_after(text)
+        elif t == "brief.start":
+            with db.session() as s:
+                ss = s.get(ShiftSession, state.shift_session_id) if state.shift_session_id else None
+                data_b = brief_data(s, person_id, ss.started_at if ss else None)
+            await push({"type": "ui.tickets", "heading": "Shift Brief", "tickets": data_b["tickets"], "brief": True})
+            activity.latest_user_lang = person.preferred_language
+            await say_after(prompts.brief_instruction(data_b, person.preferred_language))
+        elif t == "handover.start":
+            keys = handover_tickets(state)
+            state.mode = "handover"
+            state.handover_keys = keys
+            activity.latest_user_lang = person.preferred_language
+            await say_after(prompts.handover_instruction(keys, person.preferred_language))
+        elif t == "photo.attached":
+            ids = [int(i) for i in data.get("photo_ids", [])]
+            with db.session() as s:
+                for pid in ids:
+                    p = s.get(Photo, pid)
+                    if p:
+                        p.session_id = state.session_id
+                        s.add(p)
+                        state.photos.append({"id": p.id, "url": f"/uploads/{p.path}"})
+                s.commit()
+            await push({"type": "ui.draft", "draft": draft_view(state)})
+            await say_after("[The user attached a photo to the Draft.] Acknowledge in a few words, then read back a one-sentence summary and ask whether to file.")
+        elif t == "photo.skipped":
+            await say_after("[The user skipped the photo.] Read back a one-sentence summary and ask whether to file.")
+        elif t == "draft.file":
+            result = await run_tool(state, "file_ticket", {})
+            if "error" in result:
+                await say_after(f"[The user tapped File, but filing failed: {result['error']}] Ask for what's missing in one short question.")
+            else:
+                await say_after(f"[The user tapped File. Filed {result['ticket_key']}, assigned to {', '.join(result['assignees'])}.] Confirm in one short line.")
+        elif t == "draft.discard":
+            await discard_draft(state)
+            await say_after("[The user tapped Discard on the Draft.] Acknowledge in a few words.")
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        logger.info(f"[{tag}] client disconnected")
         await runner.cancel()
 
-    await runner.run()
-    logger.info(f"bot session end device={device_id}")
+    try:
+        await runner.run()
+    finally:
+        watcher.cancel()
+        await stt.close_gate()
+        logger.info(f"[{tag}] voice session end; STT audio sent {stt.sent_bytes / 32000:.1f}s")
+
+
+

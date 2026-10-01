@@ -23,9 +23,11 @@ WORDS = {"zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "
 def normalize_key(raw: str) -> str:
     """'KB-0141', '0141', '141', 'one four one', 'kb 141' -> 'KB-0141'."""
     text = raw.lower()
-    for w, d in WORDS.items():
-        text = re.sub(rf"\b{w}\b", d, text)
     digits = "".join(re.findall(r"\d", text))
+    if not digits:
+        spoken = [WORDS[w] for w in re.findall(r"[a-z]+", text) if w in WORDS]
+        if len(spoken) >= 2:
+            digits = "".join(spoken)
     if not digits:
         raise DomainError(f"'{raw}' is not a ticket number")
     return f"KB-{int(digits):04d}"
@@ -262,6 +264,9 @@ def update_ticket(s: Session, key: str, **fields: Any) -> Ticket:
 
 
 def set_assignees(s: Session, t: Ticket, person_ids: list[int]) -> None:
+    for pid in person_ids:
+        if not s.get(Person, pid):
+            raise DomainError(f"no person with id {pid}")
     for a in s.exec(select(TicketAssignee).where(TicketAssignee.ticket_id == t.id)).all():
         s.delete(a)
     s.flush()
