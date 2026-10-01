@@ -34,7 +34,9 @@ SYSTEM = (
 )
 
 
-async def run_bot(webrtc_connection: Any, body: dict, pool: KeyPool) -> None:
+async def run_bot(webrtc_connection: Any, live, manager) -> None:
+    pool: KeyPool = manager.pool
+    body = live.body
     key_index = pool.next_index()
     key = pool.key(key_index)
     device_id = body.get("device_id", "?")
