@@ -107,6 +107,7 @@ class TextSession:
                     except json.JSONDecodeError:
                         args = {}
                     result = await run_tool(self.state, name, args)
+                    result = {**result, "reply_in": "Hindi (Devanagari)" if self.lang == "hi" else "English"}
                     turn.tools.append({"name": name, "args": args, "result": result})
                     self.messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(result)})
                 if self.state.shift_ended and content:

@@ -43,6 +43,7 @@ class KBState:
     touched: set[str] = field(default_factory=set)
     mode: str = "chat"  # chat | brief | handover
     handover_keys: list[str] = field(default_factory=list)
+    handover_done: set[str] = field(default_factory=set)
     shift_ended: bool = False
     transcript: list[dict] = field(default_factory=list)  # [{who, text, lang}]
     draft_transcript_from: int = 0
@@ -367,8 +368,14 @@ async def add_check_tool(
     hub.publish("check.added", {"ticket_key": t.key, "check": check})
     hub.publish("ticket.updated", {"ticket": summary, "by": state.person_id})
     await state.push({"type": "ui.ticket", "ticket": detail, "highlight": "check"})
-    return {"ok": True, "ticket_key": t.key, "status": t.status, "unclear": c.unclear,
-            "next_check_at": check["next_check_at"]}  # fmt: skip
+    out = {"ok": True, "ticket_key": t.key, "status": t.status, "unclear": c.unclear,
+           "next_check_at": check["next_check_at"]}  # fmt: skip
+    if state.mode == "handover":
+        state.handover_done.add(t.key)
+        left = [k for k in state.handover_keys if k not in state.handover_done]
+        out["next"] = (f"ask about {left[0]} next" if left else
+                       "all handover tickets are recorded: call end_shift now (don't bring up other tickets)")  # fmt: skip
+    return out
 
 
 async def update_ticket_tool(state: KBState, ticket_key: str, title: str | None = None,

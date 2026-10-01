@@ -244,6 +244,8 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
         name = params.function_name
         result = await run_tool(state, name, dict(params.arguments or {}))
         refresh()
+        # The follow-up LLM call reads this result last, so restate the reply language here too.
+        result = {**result, "reply_in": "Hindi (Devanagari)" if activity.latest_user_lang == "hi" else "English"}
         run_llm = not (name in UI_ONLY and getattr(llm, "spoke", False) and "error" not in result)
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=run_llm))
 
