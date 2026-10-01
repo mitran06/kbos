@@ -5,18 +5,23 @@
 **What works (each verified on the Nothing Phone 2a and/or the headless WebRTC client):**
 - People grid → tap a face → shift starts → KB speaks the **Shift Brief** while the ticket cards animate in (critical first, then the overdue Monitoring with its Unclear Check) → the pill opens for follow-ups.
 - Voice in English, Hindi and Hinglish, with replies in the user's language (Hindi in Devanagari for the TTS). Tickets are stored in English.
-- **Filing by voice:** the Draft card fills live. KB asks "same problem as KB-0141?", asks only for what's missing, offers the in-app camera (photo or Skip), reads back, and files. The ticket gets the telemetry snapshot, the transcript, the photo and the link, and is auto-assigned to the on-shift Maintenance Technician (plus the Supervisor when Critical).
+- **Filing by voice:** the Draft card fills live. KB asks "same problem as KB-0141?", asks only for what's missing, offers the in-app camera (photo or Skip), reads back, and files. The ticket gets the telemetry snapshot (it caught the injected 9.5 mm/s spike), the transcript, the photo and the link, and is auto-assigned to the on-shift Maintenance Technician (plus the Supervisor when Critical).
+  - Verified **fully spoken** on the phone: 4B report → "same problem?" → since → severity → camera → "हाँ file कर दो" → KB-0142 filed. That run used WAVs played from the laptop speaker, with 1.4–1.7 s per turn.
 - **Silent live updates:** a ticket assigned to you drops in as a card with a haptic. No speech.
-- Query / close / assign by voice. Operators can't close: KB refuses and offers Monitoring. **Unclear Check:** KB asks once, then records it with the amber Unclear badge.
-- **End shift → Handover:** KB walks through your touched open tickets, records Checks, ends the shift, shows "Handover recorded" and returns to the grid.
+- **Query / close / assign by voice.**
+  - Maintenance can close with a specific Check, including "same root cause as 142", which reuses that Check.
+  - Operators can't close: KB says so and offers Monitoring.
+  - **Unclear Check:** KB asks once, then records it with the amber Unclear badge using only the worker's own words.
+- **End shift → Handover:** KB walks through your touched open tickets, records Checks, tells you which of yours were closed by others ("the 4B vibration you filed is closed: Imran replaced the spindle bearing"), ends the shift, shows "Handover recorded" and returns to the grid.
 - **Dashboard** at `http://<laptop>:7860/admin`:
-  - live over /ws: Tickets with KPIs, the detail sheet with the full story, editing, and status changes that require a Check;
+  - live over /ws: Tickets with KPIs, the KB-0141 detail sheet that reads as the whole story, editing, and status changes that require a Check;
   - Machines with live telemetry and Inject vibration / Clear;
   - Demo: Reset, key pool, sessions and latency;
   - Shifts, Glossary, and the Activity feed.
+- **Rehearsals:** the full PLAN §11 storyline passed 3 times in a row (phone as Ramesh with typed turns plus a real camera shot, a headless client as Imran on "phone 2"). Demo reset sends logged-in phones back to the grid.
 - **Tests:**
   - `cd backend && uv run pytest -q`: 112 domain/API tests pass.
-  - `uv run pytest -m llm tests/test_scenarios.py`: 7 conversation scenarios × 3 runs, 21/21 pass (real LLM, text mode).
+  - `uv run pytest -m llm tests/test_scenarios.py`: 7 conversation scenarios × 3 runs, 21/21 pass (real LLM, text mode); passed on 6 consecutive full runs after the last prompt changes.
 
 **Measured latency** (laptop on campus Wi-Fi + WARP, headless WebRTC client, end of user audio → first KB audio):
 
@@ -32,11 +37,13 @@ The last 10 turn breakdowns are at `GET /api/health` (`latency`) and in the app'
 **WARP finding:** with Cloudflare WARP on, Sarvam LLM time-to-first-token is about 0.23 s; with it off, about 0.16 s. TTS first audio is about 0.25 s on and 0.20 s off, and STT is the same either way. WARP costs about 50–70 ms per turn, which is not worth fighting over. If the venue Wi-Fi is flaky with WARP, turn it off (`warp-cli disconnect`).
 
 **Known issues / caveats:**
-- **Half-duplex.** While KB is speaking (plus 0.9 s), the mic is ignored. Otherwise the phone's loudspeaker leaks into its mic and KB interrupts itself. To cut KB off, tap the **Stop** button. Speak after KB finishes.
-- In a noisy room, speak close to the phone. Sarvam can hallucinate short words on noise.
-- Sarvam's gateway intermittently returns HTTP 404. LLM, TTS and STT connects retry automatically. If a turn ever goes silent, tap Stop, then the orb again.
+- **Half-duplex (by design).** While KB is speaking, plus 0.9 s, the mic is ignored. Otherwise the phone's loudspeaker leaks into its mic and KB interrupts itself. To cut KB off, tap the **Stop** button. **Speak after KB finishes.**
+- **A short reply right after KB speaks is occasionally missed** (e.g. "दस minute से"). We saw this only with laptop-speaker playback; the phone's own echo/noise suppression seems to duck it briefly. If KB doesn't react within about 2 s, just say it again, a little louder and closer to the phone. Captions above the pill show what KB heard.
+- If the presenter answers in English after speaking Hinglish, KB may reply in Hindi for a turn. Stay in one language per stretch.
+- STT can mishear "one-four-one" as "1412"; KB usually recovers. Saying "KB-0141" or "ticket 141" is safer.
+- Sarvam's gateway intermittently returns HTTP 404. LLM, TTS and STT connects retry and recover without ending the session. If a turn ever goes silent, tap Stop, then the orb again. If still stuck, background the app for 30+ s or log out and in.
 - KB sometimes fills the Draft's "context" from the related ticket (e.g. "after tool change") instead of asking.
-- The app's hidden typed input (long-press the pill) is the noisy-venue fallback. Typing Hinglish in Latin letters works, but KB's spoken reply quality is best with real speech.
+- **Fallback for a noisy venue:** long-press the pill to type (or Settings → "Type instead of talk"). It's the same flow, and KB still speaks its replies.
 
 ## Start (fresh terminal)
 
@@ -91,4 +98,11 @@ Key pool health is at `GET /api/health` (per key: ok / exhausted / untested) and
 8. Ramesh taps **End shift**. KB runs the Handover and shows "Handover recorded".
 9. Dashboard: open **KB-0141**. The whole story is there.
 
-Speak *after* KB finishes each sentence (half-duplex). Tap **Stop** to cut KB off.
+Speak *after* KB finishes each sentence (half-duplex). Tap **Stop** to cut KB off. In step 3, tap the orb before speaking: the pill closes after 15 s of silence. In step 8, Ramesh's only touched ticket (KB-0142) is already closed, so KB just says Imran closed it and ends the shift.
+
+## Before the demo (checklist)
+1. `scripts/start.sh --reset` **after 06:00** (so the Day crew is "on shift now").
+2. Phones on the hotspot. In each app: Settings → Server URL `http://<laptop-hotspot-ip>:7860` → Save & test ("Connected ✓").
+3. Phone 2: tap **Imran** (screen stays awake while logged in).
+4. Dashboard on the projector: `http://localhost:7860/admin` (hard reload once).
+5. Health: dashboard Demo tab shows all keys "ok".
