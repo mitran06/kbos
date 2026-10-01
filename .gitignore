@@ -1,0 +1,30 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# deps / builds
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+.expo/
+app/android/
+app/ios/
+*.apk
+*.aab
+
+# runtime data
+backend/data/
+backend/uploads/
+*.db
+*.db-wal
+*.db-shm
+
+# tooling scratch
+.playwright-mcp/
+.DS_Store
+*.log

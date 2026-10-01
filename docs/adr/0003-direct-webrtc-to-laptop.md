@@ -1,0 +1,3 @@
+# Phones stream audio straight to the laptop over SmallWebRTC; all devices share one network
+
+The backend (FastAPI + Pipecat) runs on the presenter's laptop, and each phone opens a peer-to-peer SmallWebRTC connection to it. We use no cloud SFU (Daily) and no tunnel, so there is no account, no third party in the audio path, and the lowest latency. The cost is that phones must reach the laptop's IP directly. The primary setup is a dedicated phone hotspot that the laptop and all demo phones join. Tailscale on every device is the fallback, and USB tethering is the overnight-dev fallback. The server URL is editable inside the app, so changing networks never needs a rebuild. Cloudflare Tunnel was rejected because it can't carry WebRTC UDP media without a TURN relay.

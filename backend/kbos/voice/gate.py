@@ -1,0 +1,148 @@
+"""STT gate: Sarvam realtime STT that only bills while the orb is listening.
+
+- Closed gate: no socket, no audio leaves the laptop.
+- Opening the gate connects lazily. Audio that arrives while the socket is
+  coming up is buffered (about 2 s) so the first words aren't lost.
+- With manual endpointing the pipeline's VAD marks each utterance. Between
+  utterances audio is held in a short pre-roll ring instead of being sent, and
+  is flushed right after `speech_start`, so the first syllable ("KB, ...")
+  survives VAD's start delay and silence is never billed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections import deque
+from typing import Any
+
+from loguru import logger
+from pipecat.frames.frames import Frame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessorSetup
+from pipecat.services.sarvam.stt import SarvamRealtimeSTTService
+
+PRE_ROLL_S = 0.6
+CONNECT_BUFFER_S = 2.0
+
+
+class GatedSarvamSTT(SarvamRealtimeSTTService):
+    def __init__(self, *, keyterms: list[str] | None = None, **kwargs: Any) -> None:
+        super().__init__(endpointing="manual", **kwargs)
+        self._keyterms = keyterms or []
+        self._gate_open = False
+        self._in_speech = False
+        self._ring: deque[bytes] = deque()
+        self._ring_bytes = 0
+        self._connecting: asyncio.Task | None = None
+        self.sent_bytes = 0  # audio actually sent to Sarvam (billing proxy)
+
+    # -- gate ---------------------------------------------------------------
+
+    @property
+    def gate_open(self) -> bool:
+        return self._gate_open
+
+    async def open_gate(self) -> None:
+        if self._gate_open:
+            return
+        self._gate_open = True
+        self._in_speech = False
+        self._clear_ring()
+        if not self._is_websocket_open() and not self._connecting:
+            self._connecting = self.create_task(self._lazy_connect())
+        logger.info("stt gate open")
+
+    async def close_gate(self) -> None:
+        if not self._gate_open:
+            return
+        self._gate_open = False
+        self._in_speech = False
+        self._clear_ring()
+        if self._connecting:
+            await self.cancel_task(self._connecting)
+            self._connecting = None
+        await self._disconnect()
+        logger.info(f"stt gate closed (sent {self.sent_bytes / 32000:.1f}s audio so far)")
+
+    async def _lazy_connect(self) -> None:
+        try:
+            await self._connect()
+        finally:
+            self._connecting = None
+        if self._is_websocket_open() and self._in_speech:
+            # speech started while connecting: replay what we held
+            await self._send_json({"event": "speech_start"})
+            await self._flush_ring()
+
+    # -- pipecat hooks ----------------------------------------------------------
+
+    async def setup(self, setup: FrameProcessorSetup):
+        # Skip the parent's eager connect; the gate connects on demand.
+        await super(SarvamRealtimeSTTService, self).setup(setup)
+
+    def _query_params(self) -> dict[str, Any]:
+        params = super()._query_params()
+        if self._keyterms and str(self._settings.model).startswith("saaras:v4"):
+            params["keyterms"] = json.dumps(self._keyterms[:50])
+        return params
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            await self._speech_started()
+            # let the base class see the frame for metrics, minus its own speech_start
+            await super(SarvamRealtimeSTTService, self).process_frame(frame, direction)
+            return
+        if isinstance(frame, VADUserStoppedSpeakingFrame):
+            await self._speech_stopped()
+            await super(SarvamRealtimeSTTService, self).process_frame(frame, direction)
+            return
+        await super().process_frame(frame, direction)
+
+    async def _speech_started(self) -> None:
+        if not self._gate_open:
+            return
+        self._in_speech = True
+        if self._is_websocket_open():
+            await self._send_json({"event": "speech_start"})
+            await self._flush_ring()
+
+    async def _speech_stopped(self) -> None:
+        if not self._gate_open or not self._in_speech:
+            return
+        self._in_speech = False
+        if self._is_websocket_open():
+            await self._flush_audio_buffer()
+            await self._send_json({"event": "speech_end"})
+
+    async def run_stt(self, audio: bytes):
+        if not audio or not self._gate_open:
+            yield None
+            return
+        if self._in_speech and self._is_websocket_open():
+            self.sent_bytes += len(audio)
+            async for f in super().run_stt(audio):
+                yield f
+            return
+        self._hold(audio, CONNECT_BUFFER_S if self._in_speech else PRE_ROLL_S)
+        yield None
+
+    # -- ring ------------------------------------------------------------------
+
+    def _hold(self, audio: bytes, max_s: float) -> None:
+        self._ring.append(audio)
+        self._ring_bytes += len(audio)
+        limit = int(max_s * self.sample_rate * 2)
+        while self._ring_bytes > limit and self._ring:
+            self._ring_bytes -= len(self._ring.popleft())
+
+    def _clear_ring(self) -> None:
+        self._ring.clear()
+        self._ring_bytes = 0
+
+    async def _flush_ring(self) -> None:
+        pending = b"".join(self._ring)
+        self._clear_ring()
+        if pending:
+            self.sent_bytes += len(pending)
+            async for _ in super().run_stt(pending):
+                pass

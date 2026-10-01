@@ -1,0 +1,3 @@
+# Tickets are stored in English; conversations happen in the worker's language
+
+Workers talk to KB in English, Hindi or Hinglish, and KB answers in the same language. Everything written into a Ticket (title, description, symptom, Checks) is stored in English, which the LLM writes as tool arguments. The original-language transcript is kept on the Ticket. All on-screen text is English except the live captions, which show what was actually heard and said. This keeps search, the dashboard and the next shift's reading unambiguous without per-reader translation. The cost is that the LLM must translate into tool args reliably, and the prompt and tests enforce it.

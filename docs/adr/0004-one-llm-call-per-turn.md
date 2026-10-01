@@ -1,0 +1,3 @@
+# KB keeps a live ticket snapshot in context, and UI tools don't need a second LLM call
+
+Each tool round trip costs about 0.7 s more on top of a voice turn of about 1.5 s. So KB's context carries a compact, per-turn-refreshed snapshot of the open Tickets, the people on shift and the current Draft. Pure-UI tools (show tickets, focus a ticket, update the draft) push their RTVI message immediately. Where the reply doesn't depend on the tool's result, the turn finishes in one LLM call. Tools whose results change what KB says (filing, related-ticket detection, status changes that may be refused) still take the second call. A reader may wonder why ticket data is duplicated in the prompt when a search tool exists: this is why.
