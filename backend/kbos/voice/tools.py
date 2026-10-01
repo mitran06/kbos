@@ -23,7 +23,7 @@ from kbos.domain.related import related_candidates
 from kbos.models import Check, Machine, Person, Photo, ShiftSession, Ticket, TicketAssignee
 from kbos.realtime import hub
 from kbos.telemetry import telemetry
-from kbos.voice.language import detect
+from kbos.voice.language import looks_hindi
 
 DRAFT_FIELDS = ("machine_code", "symptom", "since", "context", "machine_running", "severity")
 
@@ -265,7 +265,7 @@ async def update_draft(state: KBState, **fields: Any) -> dict:
             continue
         if isinstance(v, str) and v.strip().lower() == "not given" and not UNSURE_WORDS.search(said):
             continue
-        if k in TEXT_FIELDS and isinstance(v, str) and v.strip().lower() != "not given" and detect(v) == "hi":
+        if k in TEXT_FIELDS and isinstance(v, str) and v.strip().lower() != "not given" and looks_hindi(v):
             not_english.append(k)
             continue
         if k == "machine_code":
@@ -430,6 +430,12 @@ async def run_tool(state: KBState, name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if not handler:
         return {"error": f"unknown tool {name}"}
+    recent = state.tool_log[-2:]
+    if len(recent) == 2 and all(e["name"] == name and e["args"] == args for e in recent):
+        # The LLM is looping on an identical call: break it and get back to the user.
+        result = {"error": "you already made this exact call; stop calling tools and ask the user one short question"}
+        state.tool_log.append({"name": name, "args": args, "result": result})
+        return result
     try:
         result = await handler(state, **(args or {}))
     except DomainError as e:

@@ -231,7 +231,7 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
         context,
         user_params=LLMUserAggregatorParams(
             # Stricter than default so fans and distant chatter don't open turns (Sarvam hallucinates on noise).
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.75, start_secs=0.2, stop_secs=0.2, min_volume=0.6)),
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.75, start_secs=0.2, stop_secs=0.35, min_volume=0.6)),
             # A late final transcript must not open a phantom turn and interrupt KB.
             user_turn_strategies=UserTurnStrategies(
                 start=[VADUserTurnStartStrategy()],

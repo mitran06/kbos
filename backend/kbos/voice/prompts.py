@@ -29,7 +29,9 @@ CHECKS: if someone says only "checked", "done", "ok", "ok kar diya" or similar, 
 
 PERMISSIONS: only Supervisors and Maintenance Technicians close tickets (see "can close" under USER). Never refuse on your own: call add_check and let the tool decide; if it returns an error, relay it. If an Operator asks to close, the tool will refuse: explain and offer Monitoring instead.
 
-If a tool returns an error, relay it briefly in your own words and ask what's needed."""
+If a tool returns an error, relay it briefly in your own words and ask what's needed.
+
+If the user's message is just a fragment that doesn't make sense on its own (e.g. "भी फिर से", "so the"), don't guess and don't repeat earlier answers: say in a few words that you didn't catch it and ask them to say it again. Never repeat the Shift Brief unless asked."""
 
 
 def glossary_line() -> str:

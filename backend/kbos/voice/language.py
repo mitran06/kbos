@@ -20,7 +20,7 @@ HINGLISH = {
     "hai", "hain", "nahi", "nahin", "kar", "karo", "kiya", "raha", "rahi", "rahe", "se", "pe", "par", "bhi", "aa",
     "kya", "haan", "ha", "ho", "kab", "mein", "ki", "ka", "ko", "bas", "abhi", "phir", "bahut", "wala", "wali",
     "diya", "dena", "do", "theek", "thik", "chal", "ruk", "jayega", "hoga", "mera", "meri", "aur", "kuch", "koi",
-    "minute", "lagta", "lag", "gaya", "gayi", "liya", "chahiye", "batao", "dikhao", "kaun", "kaunse", "sab",
+    "lagta", "lag", "gaya", "gayi", "liya", "chahiye", "batao", "dikhao", "kaun", "kaunse", "sab",
     "ke", "baad", "pehle", "yeh", "woh", "kuchh", "acha", "accha", "haa", "hua", "hui", "kijiye", "dijiye",
 }  # fmt: skip
 
@@ -35,6 +35,14 @@ def detect(text: str) -> str:
     words = re.findall(r"[a-z]+", (text or "").lower())
     hits = sum(w in HINGLISH for w in words)
     return "hi" if hits >= 2 or (words and hits / len(words) > 0.25) else "en"
+
+
+def looks_hindi(value: str) -> bool:
+    """Strict check for tool-argument values: Devanagari, or clearly romanized Hindi (2+ Hindi words)."""
+    if DEVANAGARI.search(value or ""):
+        return True
+    words = re.findall(r"[a-z]+", (value or "").lower())
+    return sum(w in HINGLISH for w in words) >= 2
 
 
 class ReplyLanguage(FrameProcessor):
