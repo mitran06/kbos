@@ -39,8 +39,12 @@ CONNECT_BUFFER_S = 2.0
 
 
 class GatedSarvamSTT(SarvamRealtimeSTTService):
-    def __init__(self, *, keyterms: list[str] | None = None, **kwargs: Any) -> None:
-        super().__init__(endpointing="manual", **kwargs)
+    def __init__(
+        self, *, keyterms: list[str] | None = None, endpointing: str = "vad", half_duplex: bool = False, **kwargs: Any
+    ) -> None:
+        super().__init__(endpointing=endpointing, **kwargs)
+        self._manual = endpointing == "manual"
+        self._half_duplex = half_duplex
         self._keyterms = keyterms or []
         self._gate_open = False
         self._in_speech = False
@@ -116,6 +120,8 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
             self._connecting = None
         if self._is_websocket_open() and not self.is_usable:
             await self.set_usable(True)
+        if self._is_websocket_open() and not self._manual and self._ring:
+            await self._flush_ring()
         if self._is_websocket_open() and self._in_speech:
             # speech started while connecting: replay what we held
             await self._send_json({"event": "speech_start"})
@@ -170,14 +176,18 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
             if self._gate_open and now - self._stats_at > 5:
                 logger.debug(f"stt gate audio: {self._stats[0]} frames, {self._stats[1]} dropped as echo, peak rms {self._peak}, bot_speaking={self._bot_speaking}")
                 self._stats, self._stats_at, self._peak = [0, 0], now, 0
-        if isinstance(frame, InputAudioRawFrame) and self._gate_open and self._hearing_self():
+        muted = self._half_duplex and self._hearing_self()
+        if isinstance(frame, InputAudioRawFrame) and self._gate_open and muted:
             self._stats[1] += 1
-        if isinstance(frame, InputAudioRawFrame) and (not self._gate_open or self._hearing_self()):
+        if isinstance(frame, InputAudioRawFrame) and (not self._gate_open or muted):
             # Closed gate: nothing reaches STT (no billing) and room noise can't open a user turn.
             # While KB speaks (and a short tail after) the phone speaker leaks into its mic and KB
             # would interrupt itself, so it's half-duplex: the Stop button is how you cut KB off.
             # Drop it (the VAD's audio_idle_timeout settles a half-heard utterance; the aggregator's
             # EchoTailUserMuteStrategy does the same muting for the VAD).
+            return
+        if not self._manual:  # Sarvam's server VAD owns the turn boundaries
+            await super().process_frame(frame, direction)
             return
         if isinstance(frame, VADUserStartedSpeakingFrame):
             await self._speech_started()
@@ -214,7 +224,7 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
             logger.warning(f"sarvam stt socket dropped ({error or error_message}); will reconnect on demand")
         self._websocket = None
         self._receive_task = None
-        if self._gate_open and self._in_speech:
+        if self._gate_open and (self._in_speech or not self._manual):
             self._ensure_connecting()
         return False
 
@@ -230,6 +240,19 @@ class GatedSarvamSTT(SarvamRealtimeSTTService):
     async def run_stt(self, audio: bytes):
         if not audio or not self._gate_open:
             yield None
+            return
+        if not self._manual:
+            # Server VAD: stream continuously while the gate is open; hold audio only while connecting.
+            if self._is_websocket_open():
+                if self._ring:
+                    await self._flush_ring()
+                self.sent_bytes += len(audio)
+                async for f in super().run_stt(audio):
+                    yield f
+            else:
+                self._hold(audio, CONNECT_BUFFER_S)
+                self._ensure_connecting()
+                yield None
             return
         if self._in_speech and self._is_websocket_open():
             self.sent_bytes += len(audio)

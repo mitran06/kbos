@@ -27,3 +27,14 @@ Other findings that shaped the pipeline:
   LLM/TTS/STT connects are retried.
 - Through the air (laptop speaker → phone mic) accuracy drops and room noise can produce short hallucinated
   transcripts ("तो दोस्तों"); real speech close to the phone is fine.
+
+## Update 05:30: turn-taking moved to Sarvam server VAD
+
+The manual-endpointing + local Silero/Smart Turn + half-duplex setup was fast headless (1.4–2.0 s), but on the phone it missed short replies right after KB spoke. KB now follows Sarvam's Pipecat production guide and Pipecat's `voice-sarvam-realtime-turn-detection` example:
+- STT: `endpointing="vad"`, `silence_duration_ms=400`, `stream_type=fast`, `should_interrupt=False`.
+- Turn strategies: `MinWordsUserTurnStartStrategy(min_words=3, use_interim=True)` and `ExternalUserTurnStopStrategy(timeout=0.2, wait_for_transcript=True)`.
+- Silero `SileroVADAnalyzer()` with defaults, used only for latency timing.
+
+On the phone through the air, every turn of the filing flow was heard in full. Turns take about 2.1–3.0 s.
+
+Bulbul TTS `min_buffer_size` below 30 makes Sarvam close the TTS socket. Keep it at 30.

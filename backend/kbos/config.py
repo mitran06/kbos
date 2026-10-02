@@ -29,6 +29,9 @@ class Settings:
     stt_mode: str = "codemix"
     stt_language: str = "hi-IN"
     idle_timeout_s: float = 15.0
+    turn_mode: str = "sarvam"  # sarvam | halfduplex
+    stt_silence_ms: int = 400
+    barge_in_words: int = 3
     public_host: str = ""
     db_path: Path = BACKEND / "data" / "kbos.db"
     uploads_dir: Path = BACKEND / "uploads"
@@ -48,6 +51,9 @@ def load_settings() -> Settings:
         stt_mode=_env("STT_MODE", "codemix"),
         stt_language=_env("STT_LANGUAGE", "hi-IN"),
         idle_timeout_s=float(_env("IDLE_TIMEOUT_S", "15")),
+        turn_mode=_env("TURN_MODE", "sarvam"),
+        stt_silence_ms=int(_env("STT_SILENCE_MS", "400")),
+        barge_in_words=int(_env("BARGE_IN_WORDS", "3")),
         public_host=_env("PUBLIC_HOST", ""),
         db_path=Path(_env("KBOS_DB", str(BACKEND / "data" / "kbos.db"))),
     )

@@ -41,8 +41,12 @@ The last 10 turn breakdowns are at `GET /api/health` (`latency`) and in the app'
 **WARP finding:** with Cloudflare WARP on, Sarvam LLM time-to-first-token is about 0.23 s; with it off, about 0.16 s. TTS first audio is about 0.25 s on and 0.20 s off, and STT is the same either way. WARP costs about 50–70 ms per turn, which is not worth fighting over. If the venue Wi-Fi is flaky with WARP, turn it off (`warp-cli disconnect`).
 
 **Known issues / caveats:**
-- **Half-duplex (by design).** While KB is speaking, plus 0.9 s, the mic is ignored. Otherwise the phone's loudspeaker leaks into its mic and KB interrupts itself. To cut KB off, tap the **Stop** button. **Speak after KB finishes.**
-- **A short reply right after KB speaks is occasionally missed** (e.g. "दस minute से"). We saw this only with laptop-speaker playback; the phone's own echo/noise suppression seems to duck it briefly. If KB doesn't react within about 2 s, just say it again, a little louder and closer to the phone. Captions above the pill show what KB heard.
+- **Turn-taking (TURN_MODE=sarvam, default):** configured as Sarvam's Pipecat production guide and Pipecat's `voice-sarvam-realtime-turn-detection` example recommend.
+  - Sarvam's server-side VAD ends each turn (`endpointing="vad"`, `silence_duration_ms=400`, `stream_type="fast"`). Silero VAD only times latency.
+  - **Barge-in:** while KB talks, 3+ words interrupt it (`MinWordsUserTurnStartStrategy`), so a "haan" or a little speaker echo won't. When KB is quiet, one word starts a turn. The Stop button always interrupts.
+  - Verified on the phone through the air: every utterance in the filing flow was heard in full, with no self-interruptions. Turns take about 2.1–3.0 s.
+  - `STT_SILENCE_MS=300` makes it snappier (but may cut off people who pause). `BARGE_IN_WORDS=2` makes interrupting easier.
+- `TURN_MODE=halfduplex` is the earlier fallback: local Silero + Smart Turn with manual endpointing, about 0.5 s faster per turn. The mic is ignored while KB speaks plus 0.9 s, and short replies right after KB spoke were sometimes missed on the phone.
 - If the presenter answers in English after speaking Hinglish, KB may reply in Hindi for a turn. Stay in one language per stretch.
 - STT can mishear "one-four-one" as "1412"; KB usually recovers. Saying "KB-0141" or "ticket 141" is safer.
 - Sarvam's gateway intermittently returns HTTP 404. LLM, TTS and STT connects retry and recover without ending the session. If a turn ever goes silent, tap Stop, then the orb again. If still stuck, background the app for 30+ s or log out and in.
@@ -83,6 +87,8 @@ setsid nohup scripts/start.sh --reset > backend/data/server.log 2>&1 < /dev/null
 | `TTS_VOICE` | `ritu` | any bulbul:v3 voice (`kavya`, `shruti`, `aditya`, …) |
 | `STT_MODEL` / `STT_MODE` / `STT_LANGUAGE` | `saaras:v4` / `codemix` / `hi-IN` | see `docs/research/stt-config.md` |
 | `IDLE_TIMEOUT_S` | `15` | seconds of silence before the pill closes |
+| `TURN_MODE` | `sarvam` (server VAD + barge-in at 3 words) | `halfduplex` (local VAD/Smart Turn, no barge-in) |
+| `STT_SILENCE_MS` / `BARGE_IN_WORDS` | `400` / `3` | end-of-turn silence; words needed to interrupt KB |
 
 Key pool health is at `GET /api/health` (per key: ok / exhausted / untested) and on the dashboard's Demo tab.
 
@@ -105,7 +111,7 @@ Key pool health is at `GET /api/health` (per key: ok / exhausted / untested) and
 8. Ramesh taps **End shift**. KB runs the Handover and shows "Handover recorded".
 9. Dashboard: open **KB-0141**. The whole story is there.
 
-Speak *after* KB finishes each sentence (half-duplex). Tap **Stop** to cut KB off. In step 3, tap the orb before speaking: the pill closes after 15 s of silence. In step 8, Ramesh's only touched ticket (KB-0142) is already closed, so KB just says Imran closed it and ends the shift.
+You can talk over KB (3+ words interrupt it) or tap **Stop**. In step 3, tap the orb before speaking: the pill closes after 15 s of silence. In step 8, Ramesh's only touched ticket (KB-0142) is already closed, so KB just says Imran closed it and ends the shift.
 
 ## Before the demo (checklist)
 1. `scripts/start.sh --reset` **after 06:00** (so the Day crew is "on shift now").

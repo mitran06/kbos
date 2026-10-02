@@ -49,7 +49,9 @@ from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
+from pipecat.turns.user_start.min_words_user_turn_start_strategy import MinWordsUserTurnStartStrategy
 from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
+from pipecat.turns.user_stop.external_user_turn_stop_strategy import ExternalUserTurnStopStrategy
 from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
@@ -65,6 +67,32 @@ from kbos.voice.gate import GatedSarvamSTT
 from kbos.voice.language import ReplyLanguage, detect
 from kbos.voice.services import GnaniTTS, KBSarvamTTS, make_llm
 from kbos.voice.tools import TOOLS, KBState, closed_this_shift, discard_draft, draft_view, handover_tickets, run_tool
+
+# TURN_MODE=sarvam (default): Sarvam server VAD owns turns (endpointing="vad"), Silero only times
+# latency, barge-in needs 3 words while KB speaks (Sarvam's Pipecat production guide + Pipecat's
+# voice-sarvam-realtime-turn-detection example). TURN_MODE=halfduplex: local Silero + Smart Turn,
+# mic ignored while KB speaks (no barge-in except the Stop button).
+HALF_DUPLEX = settings.turn_mode == "halfduplex"
+
+
+def user_params() -> LLMUserAggregatorParams:
+    if HALF_DUPLEX:
+        return LLMUserAggregatorParams(
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.7, start_secs=0.2, stop_secs=0.35, min_volume=0.6)),
+            user_mute_strategies=[EchoTailUserMuteStrategy(0.9)],
+            user_turn_strategies=UserTurnStrategies(
+                start=[VADUserTurnStartStrategy()],
+                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=1.4)))],
+            ),
+        )
+    return LLMUserAggregatorParams(
+        vad_analyzer=SileroVADAnalyzer(),
+        user_turn_strategies=UserTurnStrategies(
+            start=[MinWordsUserTurnStartStrategy(min_words=settings.barge_in_words, use_interim=True)],
+            stop=[ExternalUserTurnStopStrategy(timeout=0.2, wait_for_transcript=True)],
+        ),
+    )
+
 
 LANG_TAG = {"hi": " [reply in Hindi, Devanagari]", "en": " [reply in English]"}
 UI_ONLY = {"show_tickets"}  # results don't change what KB says: skip the 2nd LLM call if KB already spoke
@@ -193,8 +221,12 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
         sample_rate=16000,
         keyterms=["KB", *MACHINE_TERMS, "vibration", "critical", "severity", "production", "assigned", "spindle bearing", *glossary],
         ttfs_p99_latency=1.6,
+        endpointing="manual" if HALF_DUPLEX else "vad",
+        half_duplex=HALF_DUPLEX,
+        should_interrupt=False,  # barge-in comes from MinWords below (Sarvam guide)
         settings=GatedSarvamSTT.Settings(
-            model=settings.stt_model, language_code=settings.stt_language, mode=settings.stt_mode, stream_type="fast"
+            model=settings.stt_model, language_code=settings.stt_language, mode=settings.stt_mode, stream_type="fast",
+            **({} if HALF_DUPLEX else {"silence_duration_ms": settings.stt_silence_ms}),
         ),
     )
     llm = make_llm(pool, key_index)
@@ -254,17 +286,7 @@ async def run_bot(webrtc_connection: Any, live, manager) -> None:
 
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(
-            # Stricter than default so fans and distant chatter don't open turns (Sarvam hallucinates on noise).
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.7, start_secs=0.2, stop_secs=0.35, min_volume=0.6)),
-            # A late final transcript must not open a phantom turn and interrupt KB.
-            user_mute_strategies=[EchoTailUserMuteStrategy(0.9)],
-            user_turn_strategies=UserTurnStrategies(
-                start=[VADUserTurnStartStrategy()],
-                # Smart Turn often calls short Hindi fragments "incomplete"; cap its silence fallback.
-                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=1.4)))],
-            ),
-        ),
+        user_params=user_params(),
     )
     pipeline = Pipeline([
         transport.input(), stt, user_agg, ContextRefresher(refresh), llm,
